@@ -67,11 +67,17 @@ export function setPivot(a: FileAlign, px: number, pz: number): FileAlign {
   return { ...a, px, pz, dx: a.dx + wx - ux, dz: a.dz + wz - uz };
 }
 
-/** the move that takes a point of the file (as drawn now) onto a point of the house — and that house point becomes the locked pivot,
- *  so a later turn keeps the two points together */
-export function matchPoint(a: FileAlign, filePoint: V3, housePoint: V3): FileAlign {
-  const moved = moveBy(a, [housePoint[0] - filePoint[0], housePoint[1] - filePoint[1], housePoint[2] - filePoint[2]]);
-  return setPivot(moved, housePoint[0], housePoint[2]);
+/** the move axes the user has locked in the dialog (user, 2026-11-03: "Lock button beside each displacement input"): a locked
+ *  axis is not moved by a nudge, a typed value or a matched point — east and north in the house frame, up the height */
+export interface AxisLocks { east: boolean; north: boolean; up: boolean }
+export const NO_LOCKS: AxisLocks = { east: false, north: false, up: false };
+
+/** the move that takes a point of the file (as drawn now) onto a point of the house — and where that point lands becomes the
+ *  locked pivot, so a later turn keeps the two points together. A locked axis keeps its part of the move at nothing: the file
+ *  point goes as far as the unlocked axes take it, and the pivot is put where it lands */
+export function matchPoint(a: FileAlign, filePoint: V3, housePoint: V3, lock: AxisLocks = NO_LOCKS): FileAlign {
+  const m: V3 = [lock.east ? 0 : housePoint[0] - filePoint[0], lock.up ? 0 : housePoint[1] - filePoint[1], lock.north ? 0 : housePoint[2] - filePoint[2]];
+  return setPivot(moveBy(a, m), filePoint[0] + m[0], filePoint[2] + m[2]);
 }
 
 /** the placement a file has: its alignment when the user accepted one, else the older per-file turn (about the house's origin) */

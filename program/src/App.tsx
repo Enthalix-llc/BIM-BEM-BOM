@@ -139,7 +139,7 @@ import type { BillColumnMap } from "./modules/bom/core/csvRead.js";
 import type { BomLedger } from "./modules/bom/core/bomDb.js";
 import { ExplainLayer } from "./explain/ExplainLayer";
 import { AlignDialog, type AlignPick } from "./view/AlignDialog";
-import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, type FileAlign } from "./core/siteAlign";
+import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, type AxisLocks, type FileAlign } from "./core/siteAlign";
 
 // pane-2 default: the envelope + structure classes plane assignment will care
 // about. A VIEW filter only — the DB stores every streamed element
@@ -283,7 +283,7 @@ export function App(): React.ReactElement {
   const siteFileTurnRef = useRef<Record<string, number>>({});
   /** THE PLACEMENT of each linked file (user, 2026-11-03): the alignment dialog's accepted move and turn about a pivot — siteAlign.ts */
   const siteFileAlignRef = useRef<Record<string, FileAlign>>({});
-  type AlignEdit = { file: string; draft: FileAlign; pick: AlignPick; from: [number, number, number] | null; note: string | null };
+  type AlignEdit = { file: string; draft: FileAlign; pick: AlignPick; from: [number, number, number] | null; note: string | null; locks: AxisLocks };
   const [alignEdit, setAlignEditState] = useState<AlignEdit | null>(null);
   const alignEditRef = useRef<AlignEdit | null>(null);
   const setAlignEdit = (e: AlignEdit | null): void => { alignEditRef.current = e; setAlignEditState(e); };
@@ -2697,9 +2697,14 @@ export function App(): React.ReactElement {
     setMenu(null);
     applyHidden();
   }, [applyHidden]);
+  // SHOW ALL (user, 2026-11-03: "show all did not work"): every element hidden, every linked file's eye, AND the levels and spaces
+  // hidden from LEVELS · SPACES — their elements are hidden in the views as surely as a right-click's, and show all left them
+  // hidden. The layers' eyes are the FILES · LAYERS settings and stay as set.
   const unhideAll = useCallback(() => {
-    if (hiddenRef.current.size === 0 && hiddenSiteRef.current.size === 0 && hiddenFilesRef.current.size === 0) return;
+    if (hiddenRef.current.size === 0 && hiddenSiteRef.current.size === 0 && hiddenFilesRef.current.size === 0 && hiddenLevelsRef.current.size === 0 && hiddenSpacesRef.current.size === 0) return;
     hiddenRef.current = new Set(); hiddenSiteRef.current = new Set(); hiddenFilesRef.current = new Set(); setHiddenFiles(new Set());
+    hiddenLevelsRef.current = new Set(); setHiddenLevels(new Set());
+    hiddenSpacesRef.current = new Set(); setHiddenSpaces(new Set());
     setMenu(null);
     applyHidden();
     applyTerrain(showTerrainRef.current);
@@ -3620,7 +3625,7 @@ export function App(): React.ReactElement {
     const f = file && files.includes(file) ? file : files[0];
     if (!f) { setStatus("Edit Alignment: no file beside the house is in the model — project one from BEM › SITE first"); return; }
     alignAskedRef.current.add(f);
-    setAlignEdit({ file: f, draft: appliedAlign(f), pick: null, from: null, note: note ?? null });
+    setAlignEdit({ file: f, draft: appliedAlign(f), pick: null, from: null, note: note ?? null, locks: NO_LOCKS });
     if (!tabRef.current.startsWith("bim")) setTab("bim-edit");
     redrawSoon();
   };
@@ -3640,7 +3645,7 @@ export function App(): React.ReactElement {
   };
   const onAlignFile = (name: string): void => {
     stopPick();
-    setAlignEdit({ file: name, draft: appliedAlign(name), pick: null, from: null, note: null });
+    setAlignEdit({ file: name, draft: appliedAlign(name), pick: null, from: null, note: null, locks: NO_LOCKS });
     alignAskedRef.current.add(name);
     redrawSoon();
   };
@@ -3663,11 +3668,13 @@ export function App(): React.ReactElement {
       if (cur.pick === "to" && cur.from) {
         if (hit.onFile) { setAlignEdit({ ...cur, note: "that point is on the file — click the HOUSE point it belongs on" }); return; }
         stopPick();
-        setAlignEdit({ ...cur, pick: null, from: null, draft: matchPoint(cur.draft, cur.from, hit.point), note: "matched — that point is now the pivot; turn to bring the rest in line" });
+        setAlignEdit({ ...cur, pick: null, from: null, draft: matchPoint(cur.draft, cur.from, hit.point, cur.locks), note: lockedWord(cur.locks) ? `matched but for the locked ${lockedWord(cur.locks)} — where the point landed is now the pivot` : "matched — that point is now the pivot; turn to bring the rest in line" });
         placePreview();
       }
     });
   };
+  const lockedWord = (l: AxisLocks): string => [l.east ? "east" : "", l.north ? "north" : "", l.up ? "up" : ""].filter(Boolean).join(" and ");
+  const onAlignLocks = (l: AxisLocks): void => { const ed = alignEditRef.current; if (ed) setAlignEdit({ ...ed, locks: l }); };
   const closeAlign = (): void => {
     stopPick();
     setAlignEdit(null);
@@ -4172,11 +4179,18 @@ export function App(): React.ReactElement {
         </label>
         {terrainInfo && <span className="spaceInfo">{"tris" in terrainInfo ? `${terrainInfo.tris.toLocaleString()} terrain tris · rotated ${terrainInfo.rotationDeg.toFixed(2)}°` : `${terrainInfo.split} walls cut at grade · below ${fmtA(terrainInfo.belowM2)} (fill ${fmtA(terrainInfo.fillM2)}) · fill elements ${terrainInfo.fills}`}</span>}
         <span className="status">{status}</span>
-        {hiddenCount > 0 && (
-          <button className="unitsBtn" onClick={unhideAll} title="double right-click anywhere also restores them">
-            {hiddenCount} hidden · show all
-          </button>
-        )}
+        {(() => {
+          // a space under a hidden level is hidden with it — counted once, as the level
+          const spacesOwn = [...hiddenSpaces].filter((x) => { const l = levelOfSpace(x); return l === null || !hiddenLevels.has(l); }).length;
+          const n = hiddenCount + hiddenLevels.size + spacesOwn;
+          if (n === 0) return null;
+          const parts = [hiddenCount ? `${hiddenCount} element${hiddenCount === 1 ? "" : "s"}` : "", hiddenLevels.size ? `${hiddenLevels.size} level${hiddenLevels.size === 1 ? "" : "s"}` : "", spacesOwn ? `${spacesOwn} space${spacesOwn === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+          return (
+            <button className="unitsBtn" onClick={unhideAll} title={`${parts} hidden — show all brings every one back (the layers' eyes stay as set); double right-click anywhere does the same`}>
+              {n} hidden · show all
+            </button>
+          );
+        })()}
         <button className="unitsBtn" onClick={() => setImperial((v) => !v)}>
           {imperial ? "Show Metric" : "Show Imperial"}
         </button>
@@ -4222,7 +4236,7 @@ export function App(): React.ReactElement {
       {alignEdit && tab.startsWith("bim") && (
         <AlignDialog files={siteFiles.filter((f) => f.projected).map((f) => f.name)} file={alignEdit.file} onFile={onAlignFile}
           draft={alignEdit.draft} applied={appliedAlign(alignEdit.file)} onDraft={onAlignDraft}
-          pick={alignEdit.pick} onPick={onAlignPick} imperial={imperial} busy={busy} note={alignEdit.note}
+          pick={alignEdit.pick} onPick={onAlignPick} locks={alignEdit.locks} onLocks={onAlignLocks} imperial={imperial} busy={busy} note={alignEdit.note}
           fileWord={siteFiles.find((f) => f.name === alignEdit.file)?.word ?? null}
           onAccept={() => void acceptAlign()} onCancel={closeAlign} />
       )}

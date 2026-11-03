@@ -278,6 +278,7 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
   // under a hot reload the pane outlives its world: `world.scene` and `fragments.core` THROW ("No scene initialized!",
   // "FragmentsManager not initialized") from the mount effects that draw the terrain and re-apply hiding, and the App
   // unmounted (2026-09-10). A dead pane answers nothing and throws nothing; the next page load makes a live one.
+  let hiddenWanted: Set<number> | null = null, hiddenBusy = false;
   const live = (): boolean => { try { return !!world.scene.three && !!fragments.core; } catch { return false; } };
   const pane: IfcPane = {
     camera: world.camera.three as THREE.PerspectiveCamera,
@@ -402,14 +403,24 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
       }
       fragments.core.update(true);
     },
+    // ONE AT A TIME, the latest set last (2026-11-03, "show all did not work"): each call reset and hid in its own async loop, so
+    // a slower earlier hide could land after show all's reset and leave its elements hidden
     setHidden(ids) {
       if (!live()) return;
+      hiddenWanted = new Set(ids);
+      if (hiddenBusy) return;
+      hiddenBusy = true;
       void (async () => {
-        for (const [, model] of fragments.list) {
-          await model.resetVisible();
-          if (ids.size) await model.setVisible([...ids], false);
-        }
-        fragments.core.update(true);
+        try {
+          while (hiddenWanted) {
+            const want = hiddenWanted; hiddenWanted = null;
+            for (const [, model] of fragments.list) {
+              await model.resetVisible();
+              if (want.size) await model.setVisible([...want], false);
+            }
+            fragments.core.update(true);
+          }
+        } finally { hiddenBusy = false; }
       })();
     },
     setClassPaint(paints) {

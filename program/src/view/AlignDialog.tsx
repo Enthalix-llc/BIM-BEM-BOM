@@ -10,7 +10,7 @@
  * point becomes the pivot.
  */
 import { useState } from "react";
-import { NO_ALIGN, moveBy, turnBy, setPivot, type FileAlign } from "../core/siteAlign";
+import { NO_ALIGN, moveBy, turnBy, setPivot, type AxisLocks, type FileAlign } from "../core/siteAlign";
 
 const FT = 3.28083989501312;
 const MOVE_STEPS_M = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5];
@@ -25,6 +25,7 @@ export function AlignDialog(p: {
   files: string[]; file: string; onFile: (name: string) => void;
   draft: FileAlign; applied: FileAlign; onDraft: (a: FileAlign) => void;
   pick: AlignPick; onPick: (mode: AlignPick) => void;
+  locks: AxisLocks; onLocks: (l: AxisLocks) => void;
   imperial: boolean; busy: boolean; note: string | null; fileWord: string | null;
   onAccept: () => void; onCancel: () => void;
 }): React.ReactElement {
@@ -59,16 +60,24 @@ export function AlignDialog(p: {
     p.onDraft({ ...d, [ax]: (flip ? -n : n) / u });
   };
   const fmt = (m: number): string => (m * u).toFixed(p.imperial ? 3 : 4);
-  const row = (label: string, ax: 0 | 1 | 2, key: "dx" | "dy" | "dz", flip: boolean, minus: string, plus: string): React.ReactElement => (
-    <div className="alignRow">
-      <span className="alignLab">{label}</span>
-      <button onClick={() => nudge(ax, flip ? 1 : -1)} title={`move the file ${minus} by ${stepLabel(step)}`}>−</button>
-      <input key={`${key}${d[key]}`} defaultValue={fmt(flip ? -d[key] : d[key])} onBlur={(e) => typed(key, e.target.value, flip)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        title={`how far the file's point now at the pivot has moved ${plus}, ${lu} — type a value and press Enter`} />
-      <button onClick={() => nudge(ax, flip ? -1 : 1)} title={`move the file ${plus} by ${stepLabel(step)}`}>+</button>
-      <span className="ctxDim">{lu}</span>
-    </div>
-  );
+  // LOCK (user, 2026-11-03: "Lock button beside each displacement input … lit on selection, and unlit if selected again, and
+  // initial setting is unlit"): a locked axis takes no nudge, no typed value and no part of a matched point; a turn still turns
+  const row = (label: string, ax: 0 | 1 | 2, key: "dx" | "dy" | "dz", flip: boolean, minus: string, plus: string, lk: keyof AxisLocks): React.ReactElement => {
+    const locked = p.locks[lk];
+    return (
+      <div className="alignRow">
+        <span className="alignLab">{label}</span>
+        <button disabled={locked} onClick={() => nudge(ax, flip ? 1 : -1)} title={locked ? `${label} is locked` : `move the file ${minus} by ${stepLabel(step)}`}>−</button>
+        <input key={`${key}${d[key]}`} readOnly={locked} defaultValue={fmt(flip ? -d[key] : d[key])} onBlur={(e) => { if (!locked) typed(key, e.target.value, flip); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          title={locked ? `${label} is locked — unlock it to type a value` : `how far the file's point now at the pivot has moved ${plus}, ${lu} — type a value and press Enter`} />
+        <button disabled={locked} onClick={() => nudge(ax, flip ? -1 : 1)} title={locked ? `${label} is locked` : `move the file ${plus} by ${stepLabel(step)}`}>+</button>
+        <span className="ctxDim">{lu}</span>
+        <button className={`lock${locked ? " on" : ""}`} aria-pressed={locked} onClick={() => p.onLocks({ ...p.locks, [lk]: !locked })}
+          title={locked ? `${label} is locked: the − / + and a typed value are off, and Match a point leaves this axis where it is — click to unlock`
+            : `lock ${label}: the file then does not move ${minus}–${plus} by a nudge, a typed value or Match a point (a turn still turns it about the pivot)`}>Lock</button>
+      </div>
+    );
+  };
   const pickWord = p.pick === "pivot" ? "click the point the file turns about (on the house or on the file)"
     : p.pick === "from" ? "1 of 2 — click a point ON THE FILE (it is drawn lit)"
     : p.pick === "to" ? "2 of 2 — click where that point belongs ON THE HOUSE" : null;
@@ -85,9 +94,9 @@ export function AlignDialog(p: {
           {steps.map((s, i) => <option key={i} value={i}>{stepLabel(s)}</option>)}
         </select>
       </div>
-      {row("East", 0, "dx", false, "west", "east")}
-      {row("North", 2, "dz", true, "south", "north")}
-      {row("Up", 1, "dy", false, "down", "up")}
+      {row("East", 0, "dx", false, "west", "east", "east")}
+      {row("North", 2, "dz", true, "south", "north", "north")}
+      {row("Up", 1, "dy", false, "down", "up", "up")}
       <div className="alignSec">TURN <span className="ctxDim">· step</span>{" "}
         <select value={turnIx} onChange={(e) => { const n = Number(e.target.value); setTurnIx(n); store("bim-align-turn", String(n)); }}>
           {TURN_STEPS.map((s, i) => <option key={i} value={i}>{s}°</option>)}

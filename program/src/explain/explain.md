@@ -21,7 +21,7 @@ The bar across the top of the window: what the whole program works on, whatever 
 - **spaces** draws the rooms (IfcSpace volumes) in the view.
 - **terrain** (or **shading** on SITE's solar view) draws the files beside the building: the site's terrain and shading elements.
 - The grey text is the program's **status**: what it is doing, or did last.
-- **hidden · show all** appears when you have hidden elements, and shows them again.
+- **hidden · show all** appears when you have hidden elements, levels or spaces, and shows every one of them again. The layers' eyes in FILES · LAYERS stay as you set them.
 - **Show Metric / Show Imperial** switches every number you read or type between feet and metres.
 - **Explain** turns this help on: hover over a section's header to read about it here. Click it again to turn the help off.
 - The **gate** mark (✓ or ✗) reports the last check of idf.db against the file.
@@ -65,6 +65,7 @@ The alignment dialog places a file beside the house (the site, the MEP) against 
 
 - The dialog floats over the views: orbit, pan and zoom as usual, and drag it by its title to move it out of the way.
 - **MOVE** nudges the file east, north or up by the step chosen (or type how far, and press Enter). North is the project grid's north.
+- **Lock**, beside each move, holds that direction: lit, its − / + and typed value are off, and **Match a point** leaves it where it is (lock **Up** to match a point in plan alone). Click it again to unlock. The locks start unlit each time the dialog opens. A turn still turns the file about the pivot.
 - **TURN** turns the file clockwise or counter-clockwise, seen from above, about the **pivot**.
 - **Pick pivot…**: click a point in the IFC view. The file turns about the vertical line through it (drawn in yellow), so a point the file and the house share stays together while you turn.
 - **Match a point…**: click a point on the file, then the house point it belongs on. The file moves there, and that point becomes the pivot. Then turn to bring the rest in line.
