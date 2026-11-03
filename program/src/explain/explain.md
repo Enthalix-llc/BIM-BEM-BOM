@@ -15,7 +15,7 @@ Save the file and the dialog's text updates; the model is not reloaded.
 ## *
 The bar across the top of the window: what the whole program works on, whatever module is open.
 
-- **Open IFC…** opens the building's IFC file. Every module reads from it.
+- **Open IFC… ▾** opens the building's IFC file (every module reads from it), or **Edit Alignment…** to move and turn a file beside the house (see Alignment).
 - **fill** sets how opaque the model's surfaces are drawn.
 - **surface tables** shows or hides the frame of tables under the view.
 - **spaces** draws the rooms (IfcSpace volumes) in the view.
@@ -47,6 +47,28 @@ LEVELS · SPACES lists the building as the IFC file organises it: each level (If
 - The **swatch** is the colour the space is drawn in, the same in every view.
 - Attic voids under the roof are listed as their own rows. Every roof is insulated, so every void under one is inside the envelope.
 - On SYSTEMS and ZONES, dragging a room onto the sheet takes it **out of the Zone it was in**: a room belongs to one zone.
+
+
+## FILES · LAYERS
+FILES · LAYERS lists every IFC file loaded: the house, then the files beside it in its folder that are projected into it (the site, the MEP). Under each file are its own layers, as the file names them (IfcPresentationLayerAssignment, for example `A-WALL`, `M-HVAC-DUCT`, `C-TOPO`), with how many elements each holds.
+
+- Click a bar (LEVELS · SPACES or FILES · LAYERS) to drop its list down or roll it up.
+- Click a file's name to show or roll up its layers.
+- The **eye** on a file shows or hides the whole file; the eye on a layer shows or hides the elements on that layer. The site, and the MEP file's exterior equipment (the PV panels), are drawn when the terrain is shown.
+- An MEP layer whose elements are not drawn yet (ducts, pipes, fixtures inside the rooms) shows a grey eye. Turn it on to draw them, with or without the terrain.
+- The eyes change the view only. The energy model keeps every element; to leave a file out of the model, use **Close IFC… ▾**.
+
+# Alignment
+
+## *
+The alignment dialog places a file beside the house (the site, the MEP) against the house. Each file is first turned by its own TrueNorth against the house's; the dialog moves and turns it from there. It opens by itself the first time a file beside the house is in the model without a placement you accepted, and from **Open IFC… ▾ › Edit Alignment…** at any time.
+
+- The dialog floats over the views: orbit, pan and zoom as usual, and drag it by its title to move it out of the way.
+- **MOVE** nudges the file east, north or up by the step chosen (or type how far, and press Enter). North is the project grid's north.
+- **TURN** turns the file clockwise or counter-clockwise, seen from above, about the **pivot**.
+- **Pick pivot…**: click a point in the IFC view. The file turns about the vertical line through it (drawn in yellow), so a point the file and the house share stays together while you turn.
+- **Match a point…**: click a point on the file, then the house point it belongs on. The file moves there, and that point becomes the pivot. Then turn to bring the rest in line.
+- The file moves in the views as you work; nothing is kept until **Accept**. Accept stores the placement with your corrections and in ifc.db (`site_files`: the move, the pivot and the turn), projects the files again and rebuilds idf.db. **Cancel** puts the file back. **Reset** returns it to its TrueNorth turn alone.
 
 # View
 

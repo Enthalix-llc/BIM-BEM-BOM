@@ -30,6 +30,10 @@ export interface IfcPane {
    *  so while the rooms are shown a room beats the wall behind it. `row` is
    *  the index into the rows the overlay was built from. */
   onSpacePick(cb: ((row: number, button: "left" | "right", clientX: number, clientY: number) => void) | null): void;
+  /** THE ALIGNMENT DIALOG's pick (2026-11-03): while set, a left click takes the nearest point under the cursor — on the house
+   *  (Fragments) or on the overlay (the linked files) — and nothing else; `onFile` is true when it lies on the file being aligned
+   *  (the overlay's "align-preview" group). null when the click hit nothing. */
+  pickPoint(cb: ((hit: { point: [number, number, number]; onFile: boolean } | null) => void) | null): void;
   /** the hot outline of the selected room face; null clears it */
   setSpaceHighlight(group: THREE.Group | null): void;
   /** elements the user has hidden; Fragments' own visibility, never a re-derived mesh */
@@ -94,6 +98,7 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
   let classPaint: Array<{ ids: number[]; color: number; opacity: number }> = [];
   let lastHighlight: number | number[] | null = null;
   let spacePickCb: ((row: number, button: "left" | "right", clientX: number, clientY: number) => void) | null = null;
+  let pointCb: ((hit: { point: [number, number, number]; onFile: boolean } | null) => void) | null = null;
   const spaceRay = new THREE.Raycaster();
   let down: { x: number; y: number; button: number } | null = null;
   const dom = (): HTMLElement => world.renderer!.three.domElement;
@@ -104,11 +109,40 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
   dom().addEventListener("pointerup", (ev) => {
     // a synthetic event is a forwarded camera gesture from another pane, not
     // a click in this one
-    if (!ev.isTrusted || !down || !pickCb) { down = null; return; }
+    if (!ev.isTrusted || !down || (!pickCb && !pointCb)) { down = null; return; }
     const moved = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
     const button = down.button === 2 ? "right" : "left";
     down = null;
     if (moved > 4) return;
+    if (pointCb) {
+      if (button !== "left") return;
+      const cb = pointCb;
+      void (async () => {
+        const rect = dom().getBoundingClientRect();
+        const cam = world.camera.three as THREE.PerspectiveCamera;
+        spaceRay.setFromCamera(new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1), cam);
+        let best: { point: THREE.Vector3; distance: number; onFile: boolean } | null = null;
+        const over = world.scene.three.getObjectByName("terrain");
+        if (over) {
+          over.updateMatrixWorld(true);
+          const meshes: THREE.Mesh[] = [];
+          over.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.visible) meshes.push(o as THREE.Mesh); });
+          const h = spaceRay.intersectObjects(meshes, false)[0];
+          if (h) {
+            let onFile = false;
+            for (let o: THREE.Object3D | null = h.object; o; o = o.parent) if (o.name === "align-preview") { onFile = true; break; }
+            best = { point: h.point, distance: h.distance, onFile };
+          }
+        }
+        for (const [, model] of fragments.list) {
+          const hit = await model.raycast({ camera: cam, mouse: new THREE.Vector2(ev.clientX, ev.clientY), dom: world.renderer!.three.domElement });
+          if (hit && (!best || hit.distance < best.distance)) best = { point: hit.point, distance: hit.distance, onFile: false };
+        }
+        cb(best ? { point: [best.point.x, best.point.y, best.point.z], onFile: best.onFile } : null);
+      })();
+      return;
+    }
+    if (!pickCb) return;
     // the rooms first, when they are shown: an ordinary three.js raycast on
     // the overlay mesh, off its stored-row map
     const spaces = world.scene.three.getObjectByName("spaces");
@@ -354,6 +388,7 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
       }
     },
     onPick(cb) { pickCb = cb; },
+    pickPoint(cb) { pointCb = cb; dom().style.cursor = cb ? "crosshair" : ""; },
     onSpacePick(cb) { spacePickCb = cb; },
     setSpaceHighlight(group) {
       const old = world.scene.three.getObjectByName("space-highlight");
@@ -391,7 +426,7 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
     cameraState: () => ({ position: [0, 0, 0], target: [0, 0, 0], azimuthDeg: 0, polarDeg: 0, distance: 0 }),
     census: () => ({ models: 0, sceneChildren: 0, renderErrors, lastRenderError: "the pane's world is disposed (a hot reload) — reload the page", lastRenderStack: null, meshes: { total: 0, withArrays: 0, empty: 0, visible: 0 }, badGeometry: [] }),
     loadIfc: () => Promise.resolve(),
-    onPick: () => () => undefined, onSpacePick: () => () => undefined,
+    onPick: () => () => undefined, onSpacePick: () => () => undefined, pickPoint: () => undefined,
   };
   for (const k of Object.keys(pane) as Array<keyof IfcPane>) {
     const v = pane[k];

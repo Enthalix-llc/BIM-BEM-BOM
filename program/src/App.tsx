@@ -9,6 +9,7 @@ import { LensPicker } from "./modules/bem/view/bemUi.js";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as WebIFC from "web-ifc";
 import { WASM_DIR, wasmUrl } from "./core/wasmUrl.js";
+import { readLayers, layerKey, layerCounts } from "./core/ifcLayers.js";
 import { runExtraction, type ExtractRun } from "./core/ifcStream.js";
 import type { Database } from "sql.js";
 import * as THREE from "three";
@@ -137,6 +138,8 @@ import { describeEpw, readEpw } from "./modules/bem/core/epwRead.js";
 import type { BillColumnMap } from "./modules/bom/core/csvRead.js";
 import type { BomLedger } from "./modules/bom/core/bomDb.js";
 import { ExplainLayer } from "./explain/ExplainLayer";
+import { AlignDialog, type AlignPick } from "./view/AlignDialog";
+import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, type FileAlign } from "./core/siteAlign";
 
 // pane-2 default: the envelope + structure classes plane assignment will care
 // about. A VIEW filter only — the DB stores every streamed element
@@ -278,6 +281,27 @@ export function App(): React.ReactElement {
   const siteFilesRulingRef = useRef<Record<string, boolean>>({});
   /** THE PER-FILE TURN (user, 2026-09-15, C1): degrees clockwise per projected file, a ruling in the corrections ledger */
   const siteFileTurnRef = useRef<Record<string, number>>({});
+  /** THE PLACEMENT of each linked file (user, 2026-11-03): the alignment dialog's accepted move and turn about a pivot — siteAlign.ts */
+  const siteFileAlignRef = useRef<Record<string, FileAlign>>({});
+  type AlignEdit = { file: string; draft: FileAlign; pick: AlignPick; from: [number, number, number] | null; note: string | null };
+  const [alignEdit, setAlignEditState] = useState<AlignEdit | null>(null);
+  const alignEditRef = useRef<AlignEdit | null>(null);
+  const setAlignEdit = (e: AlignEdit | null): void => { alignEditRef.current = e; setAlignEditState(e); };
+  /** the overlay roots the preview lives in (one per pane), so a nudge moves the drawn file without rebuilding it */
+  const alignPreviewRef = useRef<THREE.Object3D[]>([]);
+  /** files the dialog has asked about in this window (a Close without Accept is not asked again until the house is reopened) */
+  const alignAskedRef = useRef<Set<string>>(new Set());
+  const appliedAlign = (file: string): FileAlign => alignOf(file, siteFileAlignRef.current, siteFileTurnRef.current);
+  const placePreview = (): void => {
+    const ed = alignEditRef.current;
+    if (!ed) return;
+    const m = new THREE.Matrix4().fromArray(alignMatrix(ed.draft)).multiply(new THREE.Matrix4().fromArray(alignMatrix(appliedAlign(ed.file))).invert());
+    for (const r of alignPreviewRef.current) {
+      const g = r.getObjectByName("align-preview");
+      if (g) m.decompose(g.position, g.quaternion, g.scale);
+      r.getObjectByName("align-pivot")?.position.set(ed.draft.px, 0, ed.draft.pz);
+    }
+  };
   const [siteAddress, setSiteAddress] = useState<string | null>(null);
   const [locPick, setLocPick] = useState<{ loc: Located | null; seq: number } | null>(null);
   const [stations, setStations] = useState<Station[] | null>(null);
@@ -299,6 +323,7 @@ export function App(): React.ReactElement {
   /** the right-click menu on a DETAIL band or row (2026-09-09): delete · add a layer · add a sub-item · restore */
   /** CLOSE IFC… (user, 2026-10-23): the drop-down under the button — All, the house, each file beside it */
   const [closeMenu, setCloseMenu] = useState<{ right: number; top: number } | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ left: number; top: number } | null>(null);
   const [layerMenu, setLayerMenu] = useState<{ x: number; y: number; seq: number; label: string; deleted: boolean; added: boolean; custom: boolean; parts: boolean } | null>(null);
   const layerSelRef = useRef(layerSel); layerSelRef.current = layerSel;
   const [materialsVersion, setMaterialsVersion] = useState(0);
@@ -623,6 +648,44 @@ export function App(): React.ReactElement {
   /** THE FILES HIDDEN in the view (user, 2026-09-16): the display checkbox per linked file — view state, written nowhere */
   const hiddenFilesRef = useRef<Set<string>>(new Set());
   const [hiddenFiles, setHiddenFiles] = useState<Set<string>>(new Set());
+  /** FILES · LAYERS (user, 2026-11-02): each loaded file's own IFC presentation layers — the house's element → layer, and each
+   *  projected file's by the file's own express id — with an eye per file and per layer; view state, kept in local storage */
+  const houseLayersRef = useRef<Map<number, string>>(new Map());
+  const fileLayersRef = useRef<Map<string, Map<number, string>>>(new Map());
+  /** the ground's triangles by the terrain element they came from, in the stored order — so a hidden layer drops its own */
+  const terrainRangesRef = useRef<Array<{ key: string | null; start: number; n: number }>>([]);
+  const [layerList, setLayerList] = useState<Array<{ file: string; house: boolean; layers: Array<{ name: string; count: number }> }>>([]);
+  const hiddenLayersRef = useRef<Set<string>>((() => {
+    try { const v = JSON.parse(window.localStorage.getItem("bim-hidden-layers") ?? "[]") as unknown; return new Set(Array.isArray(v) ? (v as string[]) : []); } catch { return new Set<string>(); }
+  })());
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(hiddenLayersRef.current);
+  /** the layers the user turned ON (user, 2026-11-02): a services file's layer draws nothing by default — only its exterior
+   *  shades (the PV panels) are drawn, as before — so its eye reads off until turned on, and then its elements are drawn */
+  const shownLayersRef = useRef<Set<string>>((() => {
+    try { const v = JSON.parse(window.localStorage.getItem("bim-shown-layers") ?? "[]") as unknown; return new Set(Array.isArray(v) ? (v as string[]) : []); } catch { return new Set<string>(); }
+  })());
+  const [shownLayers, setShownLayers] = useState<Set<string>>(shownLayersRef.current);
+  /** a layer drawn by default: any layer of the house or the site, and a services layer holding an exterior shade */
+  const layerDefaultOn = (file: string, layer: string): boolean => {
+    if (!mepElementsRef.current.some((e) => e.file === file)) return true;
+    const m = fileLayersRef.current.get(file);
+    return siteElementsRef.current.some((e) => (e.file || "") === file && m?.get(e.fileExpressId ?? e.expressId) === layer);
+  };
+  const layerOn = (file: string, layer: string): boolean => {
+    const k = layerKey(file, layer);
+    return !hiddenLayersRef.current.has(k) && (shownLayersRef.current.has(k) || layerDefaultOn(file, layer));
+  };
+  /** the column's two bars, each rolled down or up (user, 2026-11-02); view state */
+  const [treeBars, setTreeBars] = useState<{ levels: boolean; files: boolean }>(() => {
+    try { return { levels: true, files: false, ...(JSON.parse(window.localStorage.getItem("bim-tree-bars") ?? "{}") as object) }; } catch { return { levels: true, files: false }; }
+  });
+  useEffect(() => { try { window.localStorage.setItem("bim-tree-bars", JSON.stringify(treeBars)); } catch { /* view state only */ } }, [treeBars]);
+  const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
+  const publishLayers = (): void => {
+    const rows = [{ file: nameRef.current || "the house", house: true, layers: layerCounts(houseLayersRef.current) }];
+    for (const [file, m] of fileLayersRef.current) rows.push({ file, house: false, layers: layerCounts(m) });
+    setLayerList(rows);
+  };
   const siteFileRowsRef = useRef<Array<{ name: string; kind: string }>>([]);
   const shadingRef = useRef<{ siteSha256: string; deleted: Array<{ expressId: number; name: string; file?: string }> }>({ siteSha256: "", deleted: [] });
   const [shadingDeleted, setShadingDeleted] = useState<Array<{ expressId: number; name: string; file?: string }>>([]);
@@ -743,6 +806,12 @@ export function App(): React.ReactElement {
     const out = new Set(hiddenRef.current);
     const run = runRef.current;
     if (run && hiddenLevelsRef.current.size) for (const e of run.elements) if (e.storey && hiddenLevelsRef.current.has(e.storey)) out.add(e.expressId);
+    // FILES · LAYERS: the house's eye off hides every element; a layer's eye off hides the elements the file puts on it
+    const house = nameRef.current, hl = hiddenLayersRef.current;
+    if (hiddenFilesRef.current.has(house)) {
+      for (const id of houseLayersRef.current.keys()) out.add(id);
+      for (const e of run?.elements ?? []) out.add(e.expressId);
+    } else if (hl.size) for (const [id, l] of houseLayersRef.current) if (hl.has(layerKey(house, l))) out.add(id);
     return out;
   };
   /** an idf row whose zones are all hidden leaves pane 3 */
@@ -1016,39 +1085,104 @@ export function App(): React.ReactElement {
     const db = dbRef.current;
     const panes = dbPanesRef.current;
     if (!db || !panes) return;
-    if (!on || tabRef.current === "bem-zones") {   // ZONES shows the model alone (user, 2026-09-13): no site, no shading — the checkbox untouched
+    // THE SYSTEMS VIEW (2026-09-10): the services inventory drawn in the model, the focused subsection lit — read from the
+    // LIVE refs (the loader trap); a panel in both tables is drawn once, as its services row, while the systems are shown.
+    // On the BIM tabs too (user, 2026-11-02: the ducts behind Bed 1's hidden wall): the whole inventory, ducts and pipes
+    // inside the rooms, drawn whether or not the terrain is — its file's eye and its layers' eyes say what shows
+    const bimTab = tabRef.current.startsWith("bim");
+    const systemsOn = (tabRef.current === "bem-systems" || bimTab) && mepElementsRef.current.length > 0;
+    // THE FILE BEING PLACED (the alignment dialog, 2026-11-03): drawn whole — whatever the checkbox, its eye or its layers'
+    // default — in a group of its own that the dialog's nudges move without rebuilding anything
+    const edFile = bimTab ? alignEditRef.current?.file ?? null : null;
+    if ((!on && !edFile && !(bimTab && systemsOn && shownLayersRef.current.size)) || tabRef.current === "bem-zones") {   // ZONES shows the model alone (user, 2026-09-13): no site, no shading — the checkbox untouched
       panes.setTerrainGroups(null, null);
       ifcPaneRef.current?.setTerrain(null);
+      alignPreviewRef.current = [];
       return;
     }
-    const stored = queryTerrain(db);            // the ground comes from ifc.db
-    // THE SYSTEMS VIEW (2026-09-10): the services inventory drawn in the model, the focused subsection lit — read from the
-    // LIVE refs (the loader trap); a panel in both tables is drawn once, as its services row, while the systems are shown
-    const systemsOn = tabRef.current === "bem-systems" && mepElementsRef.current.length > 0;
-    const mepKeys = systemsOn ? new Set(mepElementsRef.current.map((e) => `${e.file}|${e.fileExpressId}`)) : null;
+    const siteFileName = siteFileRowsRef.current.find((f) => f.kind === "site")?.name ?? "_Site.ifc";
+    const stored = on || edFile === siteFileName ? queryTerrain(db) : null;            // the ground comes from ifc.db
+    const mepKeys = systemsOn && !bimTab ? new Set(mepElementsRef.current.map((e) => `${e.file}|${e.fileExpressId}`)) : null;
     const els0 = mepKeys ? siteElementsRef.current.filter((e) => !mepKeys.has(`${e.file}|${e.fileExpressId}`)) : siteElementsRef.current;
     // THE DISPLAY CHECKBOX per linked file (user, 2026-09-16): a hidden file's elements and terrain leave the view — view state
     const hf = hiddenFilesRef.current;
-    const siteFileName = siteFileRowsRef.current.find((f) => f.kind === "site")?.name ?? "_Site.ifc";
-    const terrainHidden = hf.has(siteFileName);
-    const els = hf.size ? els0.filter((e) => !hf.has(e.file || siteFileName)) : els0;
+    // FILES · LAYERS: an element on a hidden layer leaves the view; the ground goes when every layer it was read from is hidden
+    const hl = hiddenLayersRef.current;
+    const layerOff = (file: string, id: number): boolean => {
+      if (!hl.size) return false;
+      const l = fileLayersRef.current.get(file)?.get(id);
+      return !!l && hl.has(layerKey(file, l));
+    };
+    // the ground drawn: every terrain element whose layer is shown (the ranges index the stored triangles; one that does not
+    // match the stored count — an ifc.db written by another read — draws whole rather than guess)
+    let groundTris = stored?.tris ?? null;
+    const rs = terrainRangesRef.current;
+    if (groundTris && hl.size && rs.some((r) => r.key && hl.has(r.key)) && rs.reduce((a, r) => a + r.n, 0) * 9 === groundTris.length) {
+      const keep = rs.filter((r) => !(r.key && hl.has(r.key)));
+      const out = new Float32Array(keep.reduce((a, r) => a + r.n, 0) * 9);
+      let o = 0;
+      for (const r of keep) { out.set(groundTris.subarray(r.start * 9, (r.start + r.n) * 9), o); o += r.n * 9; }
+      groundTris = out;
+    }
+    const terrainHidden = (hf.has(siteFileName) && edFile !== siteFileName) || !groundTris?.length;
+    const els = els0.filter((e) => {
+      const f = e.file || siteFileName;
+      return (on || f === edFile) && (f === edFile || !hf.has(f)) && !layerOff(f, e.fileExpressId ?? e.expressId);
+    });
     // (2026-09-07) a shade file projected without a site file still draws: the overlay is
     // whatever the projected files hold — the terrain, the shading elements, the fill
-    if (!stored && !els.length && !systemsOn) { panes.setTerrainGroups(null, null); ifcPaneRef.current?.setTerrain(null); return; }
-    const view = stored && !terrainHidden ? buildTerrainView(stored.tris, TERRAIN_OPACITY) : { group: new THREE.Group(), triangles: 0 };
+    if (!stored && !els.length && !systemsOn) { panes.setTerrainGroups(null, null); ifcPaneRef.current?.setTerrain(null); alignPreviewRef.current = []; return; }
+    // ONE overlay, always named "terrain" (each pane drops the old one by that name — an unnamed group would stay behind)
+    const root = new THREE.Group();
+    root.name = "terrain";
+    const moving = new THREE.Group();
+    moving.name = "align-preview";
+    if (groundTris && !terrainHidden) {
+      const g = buildTerrainView(groundTris, TERRAIN_OPACITY).group;
+      g.name = "ground";
+      (edFile === siteFileName ? moving : root).add(g);
+    }
     // the site's shading elements — trees, ties, the dock, the PV panels — beside the ground (2026-09-05)
-    if (els.length) view.group.add(buildSiteElementsView(els, 0.9, hiddenSiteRef.current, selSiteRef.current, (name) => transmittanceOf(sunRef.current.month, name)).group);
-    if (systemsOn) view.group.add(buildMepView(mepElementsRef.current, { focus: FOCUS[sysFocusRef.current], selected: selMepRef.current }).group);
+    const shadeView = (list: typeof els): THREE.Group => buildSiteElementsView(list, 0.9, hiddenSiteRef.current, selSiteRef.current, (name) => transmittanceOf(sunRef.current.month, name)).group;
+    const elsStill = els.filter((e) => (e.file || siteFileName) !== edFile), elsMoving = els.filter((e) => (e.file || siteFileName) === edFile);
+    if (elsStill.length) root.add(shadeView(elsStill));
+    if (elsMoving.length) moving.add(shadeView(elsMoving));
+    if (systemsOn) {
+      // on the BIM tabs the shades are drawn above, with the site; a services element is drawn when its layer is turned on —
+      // and every one of the file being placed, but for a layer the user has switched off
+      const shadeKeys = bimTab ? new Set(siteElementsRef.current.map((e) => `${e.file || siteFileName}|${e.fileExpressId ?? e.expressId}`)) : null;
+      const shownOn = (e: { file: string; fileExpressId: number }): boolean => {
+        const l = fileLayersRef.current.get(e.file)?.get(e.fileExpressId);
+        return !!l && shownLayersRef.current.has(layerKey(e.file, l)) && !hl.has(layerKey(e.file, l));
+      };
+      const inv = mepElementsRef.current.filter((e) => (e.file === edFile || !hf.has(e.file))
+        && (bimTab ? !shadeKeys!.has(`${e.file}|${e.fileExpressId}`) && (e.file === edFile ? !layerOff(e.file, e.fileExpressId) : shownOn(e)) : !layerOff(e.file, e.fileExpressId)));
+      const invStill = inv.filter((e) => e.file !== edFile), invMoving = inv.filter((e) => e.file === edFile);
+      if (invStill.length) root.add(buildMepView(invStill, { focus: bimTab ? null : FOCUS[sysFocusRef.current], selected: selMepRef.current }).group);
+      if (invMoving.length) moving.add(buildMepView(invMoving, { focus: null, selected: selMepRef.current }).group);
+    }
     // the fill: the stored fill list, its faces from ifc.db, drawn as earth
     const fillIds = new Set(queryFills(db).map((f) => f.elementId));
-    if (fillIds.size && terrainRef.current) {
+    if (on && fillIds.size && terrainRef.current) {
       const terrain = terrainRef.current;
       const faces = queryFaces(db, null).filter((r) => fillIds.has(r.elementId));
       const fill = buildFillView(faces, (x, z) => heightAt(terrain, x, z), TERRAIN_OPACITY);
-      view.group.add(fill.group);
+      root.add(fill.group);
     }
-    panes.setTerrainGroups(view.group.clone(), view.group.clone());
-    ifcPaneRef.current?.setTerrain(view.group);
+    if (edFile) {
+      root.add(moving);
+      // the pivot: a vertical line through it, the height of the house and some
+      const pivot = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -10, 0), new THREE.Vector3(0, 40, 0)]),
+        new THREE.LineBasicMaterial({ color: 0xf0c060, depthTest: false, transparent: true }));
+      pivot.name = "align-pivot";
+      pivot.renderOrder = 10;
+      root.add(pivot);
+    }
+    const c2 = root.clone(), c3 = root.clone();
+    panes.setTerrainGroups(c2, c3);
+    ifcPaneRef.current?.setTerrain(root);
+    alignPreviewRef.current = edFile ? [root, c2, c3] : [];
+    if (edFile) placePreview();
   }, []);
 
   // the editing column is dragged wider for the BEM tables (user, 2026-09-04)
@@ -1198,6 +1332,7 @@ export function App(): React.ReactElement {
     shading: { siteSha256: shadingRef.current.siteSha256 || siteShaRef.current, deleted: shadingRef.current.deleted },
     siteFiles: siteFilesRulingRef.current,
     siteFileTurn: siteFileTurnRef.current,
+    ...(Object.keys(siteFileAlignRef.current).length ? { siteFileAlign: siteFileAlignRef.current } : {}),
     ...(Object.keys(zoneStageRef.current).length ? { staged: { at: new Date().toISOString(), zones: zoneStageRef.current } } : {}),
     ...(carriedRef.current ? { carried: carriedRef.current } : {}),
   });
@@ -1351,7 +1486,7 @@ export function App(): React.ReactElement {
       siteFileRowsRef.current = querySiteFiles(idfDb); setSiteFiles(siteFileRowsRef.current as typeof siteFiles);
       setSiteElsInfo((n) => n + 1);
     }
-    if (showTerrainRef.current) applyTerrain(true);
+    applyTerrain(showTerrainRef.current);
     // THE SYSTEMS DIAGRAM as saved (2026-09-10): the BEM ledger's sheet, copied into idf.db's system_* tables on every rebuild
     { const s = bemLedgerRef.current?.systems; const rows = diagramRows(s?.assembly ?? { nodes: [], edges: [] }, s?.assign ?? {}); writeSystemsDiagram(idfDb, rows); savedDiagramRef.current = { components: rows.components.length, connectors: rows.connectors.length, zones: rows.zones.length, at: bemLedgerRef.current?.savedAt ?? null }; }
     writeEdits(idfDb, [
@@ -2567,27 +2702,43 @@ export function App(): React.ReactElement {
     hiddenRef.current = new Set(); hiddenSiteRef.current = new Set(); hiddenFilesRef.current = new Set(); setHiddenFiles(new Set());
     setMenu(null);
     applyHidden();
-    if (showTerrainRef.current) applyTerrain(true);
+    applyTerrain(showTerrainRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyHidden]);
   const hideSiteElements = useCallback((ids: number[]) => {
     for (const id of ids) hiddenSiteRef.current.add(id);
     setMenu(null);
     setHiddenCount(hiddenRef.current.size + hiddenSiteRef.current.size);
-    if (showTerrainRef.current) applyTerrain(true);
+    applyTerrain(showTerrainRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /** the display checkbox per linked file and per kind (user, 2026-09-16): view state — the model keeps the file */
   const showSiteFile = useCallback((name: string, on: boolean) => {
     const n = new Set(hiddenFilesRef.current); if (on) n.delete(name); else n.add(name);
     hiddenFilesRef.current = n; setHiddenFiles(n);
-    if (showTerrainRef.current) applyTerrain(true);
+    applyTerrain(showTerrainRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /** FILES · LAYERS (user, 2026-11-02): a layer's eye, and a file's — the house's through the hidden elements, a projected file's
+   *  through the overlay (the same display flag as its SITE checkbox); view state, the model keeps every element */
+  const toggleLayer = (file: string, layer: string, house: boolean): void => {
+    const n = new Set(hiddenLayersRef.current), sh = new Set(shownLayersRef.current), k = layerKey(file, layer);
+    if (layerOn(file, layer)) { n.add(k); sh.delete(k); } else { n.delete(k); sh.add(k); }
+    hiddenLayersRef.current = n; setHiddenLayers(n);
+    shownLayersRef.current = sh; setShownLayers(sh);
+    try { window.localStorage.setItem("bim-hidden-layers", JSON.stringify([...n])); window.localStorage.setItem("bim-shown-layers", JSON.stringify([...sh])); } catch { /* view state only */ }
+    if (house) applyHidden(); else applyTerrain(showTerrainRef.current);
+  };
+  const toggleFileEye = (file: string, house: boolean): void => {
+    if (!house) { showSiteFile(file, hiddenFilesRef.current.has(file)); return; }
+    const n = new Set(hiddenFilesRef.current); if (n.has(file)) n.delete(file); else n.add(file);
+    hiddenFilesRef.current = n; setHiddenFiles(n);
+    applyHidden();
+  };
   const showSiteElements = useCallback((ids: number[], on: boolean) => {
     for (const id of ids) { if (on) hiddenSiteRef.current.delete(id); else hiddenSiteRef.current.add(id); }
     setHiddenCount(hiddenRef.current.size + hiddenSiteRef.current.size);
-    if (showTerrainRef.current) applyTerrain(true);
+    applyTerrain(showTerrainRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /** delete from the MODEL: a ledger ruling, idf.db's site_elements rebuilt without them; the dialog names the count */
@@ -2708,7 +2859,7 @@ export function App(): React.ReactElement {
       setMenu(null);
       const next = new Set(selSiteRef.current.has(se.expressId) && selSiteRef.current.size === 1 ? [] : [se.expressId]);
       selSiteRef.current = next; setSelSite(next);
-      if (showTerrainRef.current) applyTerrain(true);
+      applyTerrain(showTerrainRef.current);
       return;
     }
     if (hit.space !== undefined) { onSpacePickRef.current(hit.space, hit.pane, hit.button, hit.clientX, hit.clientY); return; }
@@ -3155,7 +3306,7 @@ export function App(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, siteView, terrainInfo, siteElsInfo, mepInfo]);
   // the SYSTEMS view follows its focus and its selection, and drops the services on leaving the tab (2026-09-10)
-  useEffect(() => { if (showTerrainRef.current) applyTerrain(true); // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { applyTerrain(showTerrainRef.current); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, sysFocus, selMep, mepInfo]);
   // the trees follow the month's transmittance while deciduous modelling is on
   const lastMonthRef = useRef(sun.month);
@@ -3365,6 +3516,7 @@ export function App(): React.ReactElement {
     const rooms = roomSolids(run.spaces.map((sp) => ({ faces: sp.faces, name: sp.longName ?? sp.name ?? `#${sp.expressId}` })));
     const words: string[] = [];
     let terrainDone = false, index = 0;
+    fileLayersRef.current = new Map(); terrainRangesRef.current = [];
     for (const f of order) {
       if (!isProjected(f.name, siteFilesRulingRef.current)) { rows.push({ name: f.name, sha256: "", bytes: f.bytes, kind: "unread", projected: false, terrainTris: 0, elements: 0, word: "", turnDeg: 0 }); continue; }
       setStatus(`${f.name}: reading…`);
@@ -3377,7 +3529,11 @@ export function App(): React.ReactElement {
       sapi.SetWasmPath(WASM_DIR, true);
       await sapi.Init();
       const sid = sapi.OpenModel(fb, { COORDINATE_TO_ORIGIN: false });
-      const pr = projectSiteFile(sapi, sid, { name: f.name, index, houseTrueNorth: run.trueNorth, rooms, turnDeg: siteFileTurnRef.current[f.name] ?? 0 });
+      const pr = projectSiteFile(sapi, sid, { name: f.name, index, houseTrueNorth: run.trueNorth, rooms, align: alignOf(f.name, siteFileAlignRef.current, siteFileTurnRef.current) });
+      const lm = readLayers(sapi, sid);
+      fileLayersRef.current.set(f.name, lm);
+      let at = 0;
+      const ranges = pr.terrainElements.map((t) => { const l = lm.get(t.expressId), r = { key: l ? layerKey(f.name, l) : null, start: at, n: t.tris }; at += t.tris; return r; });
       sapi.CloseModel(sid);
       index++;
       if (pr.terrain && !terrainDone) {
@@ -3387,6 +3543,7 @@ export function App(): React.ReactElement {
         const terrain = buildTerrain(pr.terrain, 0);     // already turned into the house frame
         terrain.rotationDeg = pr.rotationDeg;
         terrainRef.current = terrain;
+        terrainRangesRef.current = ranges;
         writeTerrain(db, flattenTris(pr.terrain), { siteName: f.name, siteSha256: sha, rotationDeg: pr.rotationDeg });
         setTerrainInfo({ tris: pr.terrain.length, rotationDeg: pr.rotationDeg });
         terrainDone = true;
@@ -3399,7 +3556,8 @@ export function App(): React.ReactElement {
           cx: e.centroid[0], cy: e.centroid[1], cz: e.centroid[2], lod: e.lod, fileTris: e.fileTris, xyz: flattenTris(e.tris) });
         for (const sy of pr.mep.systems) mepSystems.push({ ...sy, file: f.name });
       }
-      rows.push({ name: f.name, sha256: sha, bytes: f.bytes, kind: pr.kind, projected: true, terrainTris: pr.terrain?.length ?? 0, elements: pr.elements.length, word: pr.word, turnDeg: pr.turnDeg });
+      rows.push({ name: f.name, sha256: sha, bytes: f.bytes, kind: pr.kind, projected: true, terrainTris: pr.terrain?.length ?? 0, elements: pr.elements.length, word: pr.word, turnDeg: pr.turnDeg,
+        dx: pr.align.dx, dy: pr.align.dy, dz: pr.align.dz, pivotX: pr.align.px, pivotZ: pr.align.pz });
       words.push(`${f.name}: ${pr.word}`);
     }
     if (!terrainDone) db.run("DROP TABLE IF EXISTS terrain");
@@ -3409,13 +3567,16 @@ export function App(): React.ReactElement {
     writeSiteFiles(db, rows);
     siteFileRowsRef.current = rows; setSiteFiles(siteFileRowsRef.current as typeof siteFiles);
     setSiteWord(words.join(" · "));
+    publishLayers();
   };
   /** THE PER-FILE TURN typed in the SITE table (user, 2026-09-15, C1): a ruling in the ledger, the files projected again, idf.db rebuilt — the same path as the checkbox */
   const onTurnFile = useCallback(async (name: string, deg: number) => {
     const run = runRef.current, db = dbRef.current;
     if (!run || !db || !pathRef.current) return;
-    const next = { ...siteFileTurnRef.current }; if (deg) next[name] = deg; else delete next[name];
-    siteFileTurnRef.current = next;
+    // a file with an accepted placement turns that placement, about its own pivot (2026-11-03); else the older turn about the origin
+    const placed = siteFileAlignRef.current[name];
+    if (placed) siteFileAlignRef.current = { ...siteFileAlignRef.current, [name]: { ...placed, deg, at: new Date().toISOString() } };
+    else { const next = { ...siteFileTurnRef.current }; if (deg) next[name] = deg; else delete next[name]; siteFileTurnRef.current = next; }
     setBusy(true);
     try {
       terrainRef.current = null; setTerrainInfo(null);
@@ -3445,10 +3606,95 @@ export function App(): React.ReactElement {
       setShowTerrain(true); showTerrainRef.current = true;
       applyTerrain(true);
       setStatus(`${name}: ${on ? "projected into" : "left out of"} the model`);
+      if (on && !siteFileAlignRef.current[name]) { alignAskedRef.current.delete(name); askAlignRef.current(); }
     } catch (err) { setStatus(`failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [choices, showSpaces, fillOpacity, shellOn, rebuildIdf, applyTerrain]);
+  // ── THE ALIGNMENT DIALOG (user, 2026-11-03) ────────────────────────────────────────────────────────────────────────────────
+  const projectedFiles = (): string[] => (siteFileRowsRef.current as SiteFileRow[]).filter((f) => f.projected).map((f) => f.name);
+  const redrawSoon = (): void => { requestAnimationFrame(() => applyTerrain(showTerrainRef.current)); };
+  /** open the dialog on a file (the first projected one when none is named); the BIM views are where it is seen */
+  const openAlign = (file?: string, note?: string): void => {
+    const files = projectedFiles();
+    const f = file && files.includes(file) ? file : files[0];
+    if (!f) { setStatus("Edit Alignment: no file beside the house is in the model — project one from BEM › SITE first"); return; }
+    alignAskedRef.current.add(f);
+    setAlignEdit({ file: f, draft: appliedAlign(f), pick: null, from: null, note: note ?? null });
+    if (!tabRef.current.startsWith("bim")) setTab("bim-edit");
+    redrawSoon();
+  };
+  /** after a load or a projection: a projected file with no accepted placement is shown in the dialog, once per window */
+  const askAlign = (): void => {
+    if (alignEditRef.current) return;
+    const f = projectedFiles().find((n) => !siteFileAlignRef.current[n] && !alignAskedRef.current.has(n));
+    if (f) openAlign(f, `${f} is placed by its TrueNorth turn alone — check where it sits against the house, then Accept (or move it first)`);
+  };
+  const askAlignRef = useRef(askAlign); askAlignRef.current = askAlign;
+  const stopPick = (): void => { ifcPaneRef.current?.pickPoint(null); };
+  const onAlignDraft = (a: FileAlign): void => {
+    const ed = alignEditRef.current;
+    if (!ed) return;
+    setAlignEdit({ ...ed, draft: a, note: null });
+    placePreview();
+  };
+  const onAlignFile = (name: string): void => {
+    stopPick();
+    setAlignEdit({ file: name, draft: appliedAlign(name), pick: null, from: null, note: null });
+    alignAskedRef.current.add(name);
+    redrawSoon();
+  };
+  const onAlignPick = (mode: AlignPick): void => {
+    const ed = alignEditRef.current;
+    if (!ed) return;
+    setAlignEdit({ ...ed, pick: mode, from: null, note: null });
+    if (!mode) { stopPick(); return; }
+    ifcPaneRef.current?.pickPoint((hit) => {
+      const cur = alignEditRef.current;
+      if (!cur || !cur.pick) return;
+      if (!hit) { setAlignEdit({ ...cur, note: "nothing under the cursor there — click on the house or the file" }); return; }
+      const [x, , z] = hit.point;
+      if (cur.pick === "pivot") { stopPick(); setAlignEdit({ ...cur, pick: null, draft: setPivot(cur.draft, x, z), note: null }); placePreview(); return; }
+      if (cur.pick === "from") {
+        if (!hit.onFile) { setAlignEdit({ ...cur, note: `that point is not on ${cur.file} — click the file itself` }); return; }
+        setAlignEdit({ ...cur, pick: "to", from: hit.point, note: null });
+        return;
+      }
+      if (cur.pick === "to" && cur.from) {
+        if (hit.onFile) { setAlignEdit({ ...cur, note: "that point is on the file — click the HOUSE point it belongs on" }); return; }
+        stopPick();
+        setAlignEdit({ ...cur, pick: null, from: null, draft: matchPoint(cur.draft, cur.from, hit.point), note: "matched — that point is now the pivot; turn to bring the rest in line" });
+        placePreview();
+      }
+    });
+  };
+  const closeAlign = (): void => {
+    stopPick();
+    setAlignEdit(null);
+    redrawSoon();
+  };
+  /** Accept: the placement into the ledger, the files projected again (ifc.db's site_files keeps the move, the pivot and the turn), idf.db rebuilt */
+  const acceptAlign = async (): Promise<void> => {
+    const ed = alignEditRef.current, run = runRef.current, db = dbRef.current;
+    if (!ed || !run || !db || !pathRef.current) return;
+    stopPick();
+    siteFileAlignRef.current = { ...siteFileAlignRef.current, [ed.file]: { ...ed.draft, at: new Date().toISOString() } };
+    const turns = { ...siteFileTurnRef.current }; delete turns[ed.file]; siteFileTurnRef.current = turns;
+    setAlignEdit(null);
+    setBusy(true);
+    try {
+      terrainRef.current = null; setTerrainInfo(null);
+      await projectFiles(pathRef.current, run, db);
+      stampIfcContentSha(db);
+      await window.bim.saveDb("ifc.db", db.export());
+      await rebuildIdf(choices, showSpaces ? FADED_SURFACE : fillOpacity, shellOn);
+      applyTerrain(showTerrainRef.current);
+      const a = ed.draft;
+      setStatus(`${ed.file}: placed — ${isIdentity(a) ? "its TrueNorth turn alone" : `moved (${a.dx.toFixed(3)}, ${a.dy.toFixed(3)}, ${a.dz.toFixed(3)}) m, turned ${a.deg.toFixed(3)}° clockwise about (${a.px.toFixed(3)}, ${a.pz.toFixed(3)})`}; ifc.db and idf.db rebuilt`);
+    } catch (err) { setStatus(`failed: ${err instanceof Error ? err.message : String(err)}`); }
+    finally { setBusy(false); }
+    askAlign();
+  };
   /** the corrections ledger into the refs and the state that every rebuild reads — on load, and again when the file's changes are ruled on */
   const seedCorrections = useCallback((ledger: CorrectionsLedger | null) => {
     choicesRef.current = new Map(Object.entries(ledger?.steps ?? {}) as Array<[string, StepChoice]>);
@@ -3468,6 +3714,8 @@ export function App(): React.ReactElement {
     setShadingDeleted(shadingRef.current.deleted);
     siteFilesRulingRef.current = ledger?.siteFiles ?? {};
     siteFileTurnRef.current = ledger?.siteFileTurn ?? {};
+    siteFileAlignRef.current = (ledger?.siteFileAlign ?? {}) as Record<string, FileAlign>;
+    alignAskedRef.current = new Set();
     carriedRef.current = ledger?.carried ?? null;
   }, []);
   const loadPicked = useCallback(async (picked: { name: string; path: string; bytes: Uint8Array }) => {
@@ -3488,6 +3736,7 @@ export function App(): React.ReactElement {
       await api.Init();
       const modelID = api.OpenModel(bytes);
       const run = runExtraction(api, modelID);
+      houseLayersRef.current = readLayers(api, modelID);
       api.CloseModel(modelID);
       runRef.current = run;
 
@@ -3699,6 +3948,7 @@ export function App(): React.ReactElement {
       applyTerrain(showTerrainRef.current);
       // the file this window has open — a reload (a crash recovered, a merge) reopens it; a new window starts empty
       try { window.sessionStorage.setItem(OPEN_FILE_KEY, picked.path); } catch { /* the reopen is a convenience */ }
+      askAlignRef.current();   // a file beside the house with no accepted placement is shown in the alignment dialog
     } catch (err) {
       console.error(err);
       setStatus(`failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -3870,8 +4120,10 @@ export function App(): React.ReactElement {
         </div>
       )}
       <div className="topbar">
-        <button onClick={() => void openIfc()} disabled={busy}>
-          {busy ? "working…" : "Open IFC…"}
+        <button disabled={busy}
+          onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setOpenMenu({ left: r.left, top: r.bottom + 4 }); }}
+          title="open a house file, or edit where the files beside it sit">
+          {busy ? "working…" : "Open IFC… ▾"}
         </button>
         <label>
           fill
@@ -3953,6 +4205,26 @@ export function App(): React.ReactElement {
           <i> {armedSpace.label}</i>
           <button onClick={() => { armedSpaceRef.current = null; setArmedSpace(null); }}>cancel</button>
         </div>
+      )}
+      {openMenu && (
+        <>
+          <div className="menuScrim" onPointerDown={() => setOpenMenu(null)} />
+          <div className="ctxMenu" style={{ left: openMenu.left, top: openMenu.top }}>
+            <div className="ctxHead">open IFC</div>
+            <button onClick={() => { setOpenMenu(null); void openIfc(); }} title="open a house IFC file (it replaces the one open); the IFC files beside it are found and projected with it">Open IFC…</button>
+            <button disabled={!loadedAt || !siteFiles.some((f) => f.projected)} onClick={() => { setOpenMenu(null); openAlign(); }}
+              title={siteFiles.some((f) => f.projected) ? "move and turn a file beside the house — see it in place before you Accept; ifc.db keeps the placement" : "no file beside the house is in the model"}>
+              Edit Alignment…
+            </button>
+          </div>
+        </>
+      )}
+      {alignEdit && tab.startsWith("bim") && (
+        <AlignDialog files={siteFiles.filter((f) => f.projected).map((f) => f.name)} file={alignEdit.file} onFile={onAlignFile}
+          draft={alignEdit.draft} applied={appliedAlign(alignEdit.file)} onDraft={onAlignDraft}
+          pick={alignEdit.pick} onPick={onAlignPick} imperial={imperial} busy={busy} note={alignEdit.note}
+          fileWord={siteFiles.find((f) => f.name === alignEdit.file)?.word ?? null}
+          onAccept={() => void acceptAlign()} onCancel={closeAlign} />
       )}
       {closeMenu && (
         <>
@@ -4036,7 +4308,11 @@ export function App(): React.ReactElement {
         onSelect={(m) => setTab(firstTab(m))}
       />
       <aside className="tree" style={{ flexBasis: treeW }}>
-        <div className="treeHead">LEVELS · SPACES</div>
+        <button className="treeHead treeBar" onClick={() => setTreeBars((b) => ({ ...b, levels: !b.levels }))}
+          title={treeBars.levels ? "roll up the levels and spaces" : "drop down the levels and spaces"}>
+          LEVELS · SPACES <span className="treeCaret">{treeBars.levels ? "▾" : "▸"}</span>
+        </button>
+        {treeBars.levels && (<>
         {(hiddenLevels.size > 0 || hiddenSpaces.size > 0) && (
           <div className="allRow"><button onClick={showAllLevels}>show all</button></div>
         )}
@@ -4073,6 +4349,40 @@ export function App(): React.ReactElement {
                     <button className={`eye${aoff ? " off" : ""}`} onClick={() => toggleSpace(an)} title={aoff ? (off ? "show this attic alone: its level comes back with the other spaces still hidden" : "show this attic") : "hide this attic"} aria-label={aoff ? "show attic" : "hide attic"}><Eye on={!aoff} /></button>
                     {(() => { const h = roomNameProps(an); return <span className={`name${roomDrag ? " draggable" : ""}${h.className}`} style={h.style} onContextMenu={h.onContextMenu} onClick={() => selectSpaceName(an)} onPointerDown={roomDrag ? (e) => { e.preventDefault(); startPaletteDrag({ room: an }, an, e); } : undefined} title={`${h.held ? (h.via ? `merged into ${h.via} on ZONES, which is in zone ${h.held.name} on the SYSTEMS sheet` : `in zone ${h.held.name} on the SYSTEMS sheet · right-click to un-assign it`) : asmView ? (elecSheet ? "drag this space onto a Load center on the sheet: its zone goes on that load center" : "drag this attic onto a Zone on the sheet") : "select this void: every cell that bounds it lights up"}\nright-click: zoom to it${h.held || h.via ? "" : " and assign it to a Zone"} · double right-click: back to the view before`}>{an}</span>; })()}
                     {voidMark(an)}
+                  </div>
+                );
+              })}
+            </Fragment>
+          );
+        })}
+        </>)}
+        <button className="treeHead treeBar" onClick={() => setTreeBars((b) => ({ ...b, files: !b.files }))}
+          title={treeBars.files ? "roll up the files and their layers" : "drop down the files loaded and their layers"}>
+          FILES · LAYERS <span className="treeCaret">{treeBars.files ? "▾" : "▸"}</span>
+        </button>
+        {treeBars.files && layerList.map((f) => {
+          const foff = hiddenFiles.has(f.file);
+          const open = openFiles.has(f.file);
+          return (
+            <Fragment key={f.file}>
+              <div className={`row level${foff ? " off" : ""}`}>
+                <button className={`eye${foff ? " off" : ""}`} onClick={() => toggleFileEye(f.file, f.house)}
+                  title={f.house ? (foff ? "show the house" : "hide the house") : (foff ? "show this file" : "hide this file — it is drawn when the terrain is shown")}
+                  aria-label={foff ? "show file" : "hide file"}><Eye on={!foff} /></button>
+                <span className="name" onClick={() => setOpenFiles((s) => { const n = new Set(s); if (n.has(f.file)) n.delete(f.file); else n.add(f.file); return n; })}
+                  title={open ? "roll up its layers" : "drop down its layers"}>{open ? "▾" : "▸"} {f.file}</span>
+                <span className="elev" title={f.house ? "the house file" : "a file beside the house, projected into it"}>{`${f.layers.length} layers`}</span>
+              </div>
+              {open && !f.layers.length && <div className="row space off"><span className="name muted">the file names no layers</span></div>}
+              {open && f.layers.map((l) => {
+                void hiddenLayers; void shownLayers; void mepInfo; void siteElsInfo;   // the eye re-reads when these move
+                const loff = foff || !layerOn(f.file, l.name);
+                return (
+                  <div key={l.name} className={`row space${loff ? " off" : ""}`}>
+                    <button className={`eye${loff ? " off" : ""}`} onClick={() => toggleLayer(f.file, l.name, f.house)} disabled={foff}
+                      title={foff ? "the file is hidden — show it first" : loff ? "show this layer" : "hide this layer"} aria-label={loff ? "show layer" : "hide layer"}><Eye on={!loff} /></button>
+                    <span className="name" title={`IFC presentation layer ${l.name} · ${l.count} element${l.count === 1 ? "" : "s"}`}>{l.name}</span>
+                    <span className="elev">{l.count}</span>
                   </div>
                 );
               })}

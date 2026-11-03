@@ -25,6 +25,7 @@ import { readTerrain, readSiteElements, readMepGeometry, rotateY, rotationFromTr
 import { readTrueNorth } from "./ifcStream.js";
 import { readMepMeta, disciplineOf, type MepMeta, type MepSystemMeta, type Discipline } from "./mepRead.js";
 import { FILE_ID_STRIDE } from "./db.js";
+import { alignPoint, isIdentity, NO_ALIGN, type FileAlign } from "./siteAlign.js";
 
 export interface RoomSolid { faces: Array<{ n: V3; outer: V3[] }>; name?: string }
 /** a wall thickness: an outlet box recessed into a wall is still the room's */
@@ -60,6 +61,8 @@ export interface FileProjection {
   rotationDeg: number;
   /** THE USER'S EXTRA TURN (2026-09-15, C1): degrees clockwise seen from above, on top of the TrueNorth turn; 0 unless ruled */
   turnDeg: number;
+  /** the placement on top of the TrueNorth turn (identity when none) */
+  align: FileAlign;
   fileTrueNorth: [number, number] | null;
   terrain: V3[][] | null;
   terrainElements: Array<{ expressId: number; name: string; tris: number; top: number }>;
@@ -136,7 +139,9 @@ export const kindName = (name: string): string => name.replace(/:\d+$/, "");
 
 export function projectSiteFile(
   api: WebIFC.IfcAPI, modelID: number,
-  opts: { name: string; index: number; houseTrueNorth: [number, number] | null; rooms: Array<RoomSolid & { min?: V3; max?: V3 }>; turnDeg?: number },
+  opts: { name: string; index: number; houseTrueNorth: [number, number] | null; rooms: Array<RoomSolid & { min?: V3; max?: V3 }>; turnDeg?: number;
+    /** the user's placement on top of the TrueNorth turn (siteAlign.ts) — when given, it replaces turnDeg */
+    align?: FileAlign },
   /** pre-read geometry (the gate's cache) instead of streaming the file; `mep` holds a shade file's services geometry and facts */
   pre?: { terrain: V3[][]; terrainElements: FileProjection["terrainElements"]; elements: SiteElement[]; fileTrueNorth: [number, number] | null;
     mep?: { geometry: SiteElement[]; meta: Map<number, MepMeta>; systems: MepSystemMeta[] } | null },
@@ -146,9 +151,13 @@ export function projectSiteFile(
   const fileTrueNorth = pre ? pre.fileTrueNorth : readTrueNorth(api, modelID);
   // the user's extra turn (C1): rotateY's positive sense is CLOCKWISE seen from above (the gate measures it on the panels), so a
   // typed "0.65° clockwise" adds +0.65 to the TrueNorth turn
-  const turnDeg = opts.turnDeg ?? 0;
-  const rotationDeg = rotationFromTrueNorth(opts.houseTrueNorth) - rotationFromTrueNorth(fileTrueNorth) + turnDeg;
-  const turn = (tris: V3[][]): V3[][] => (Math.abs(rotationDeg) < 1e-9 ? tris : tris.map((t) => t.map((p) => rotateY(p, rotationDeg)) as V3[]));
+  const align = opts.align && !isIdentity(opts.align) ? opts.align : null;
+  const turnDeg = opts.align ? opts.align.deg : (opts.turnDeg ?? 0);
+  const northDeg = rotationFromTrueNorth(opts.houseTrueNorth) - rotationFromTrueNorth(fileTrueNorth);
+  const rotationDeg = northDeg + turnDeg;
+  // the TrueNorth turn about the house's origin, then the user's placement (a move and a turn about a locked pivot) when there is one
+  const place = (p: V3): V3 => (align ? alignPoint(Math.abs(northDeg) < 1e-9 ? p : rotateY(p, northDeg), align) : rotateY(p, rotationDeg));
+  const turn = (tris: V3[][]): V3[][] => (!align && Math.abs(rotationDeg) < 1e-9 ? tris : tris.map((t) => t.map(place) as V3[]));
   const kind: FileProjection["kind"] = src.tris.length ? "site" : "shade";
   const offset = opts.index * FILE_ID_STRIDE;
   const elements: ProjectedElement[] = [], interior: ProjectedElement[] = [];
@@ -190,9 +199,10 @@ export function projectSiteFile(
   const top = [...byKind].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${n} × ${k}`).join(", ");
   const word = `${kind === "site" ? `${src.tris.length.toLocaleString()} terrain tris` : "no terrain"} · ${elements.length} shading elements${top ? ` (${top}${byKind.size > 3 ? ", …" : ""})` : ""}`
     + (interior.length ? ` · ${interior.length} inside the rooms, left out` : "")
-    + ` · turned ${rotationDeg.toFixed(2)}° (its TrueNorth ${fileTrueNorth ? `(${fileTrueNorth[0].toFixed(3)}, ${fileTrueNorth[1].toFixed(3)})` : "unstated"}${turnDeg ? `, plus the user's ${turnDeg > 0 ? "+" : ""}${turnDeg.toFixed(2)}° clockwise` : ""})`
+    + ` · turned ${rotationDeg.toFixed(2)}° (its TrueNorth ${fileTrueNorth ? `(${fileTrueNorth[0].toFixed(3)}, ${fileTrueNorth[1].toFixed(3)})` : "unstated"}${turnDeg ? `, plus the user's ${turnDeg > 0 ? "+" : ""}${turnDeg.toFixed(2)}° clockwise${align ? ` about (${align.px.toFixed(3)}, ${align.pz.toFixed(3)})` : ""}` : ""})`
+    + (align && (align.dx || align.dy || align.dz) ? ` · moved (${align.dx.toFixed(3)}, ${align.dy.toFixed(3)}, ${align.dz.toFixed(3)}) m` : "")
     + (mep ? ` · services inventory ${mep.elements.length} elements, ${mep.systems.length} systems` : "");
-  return { name: opts.name, kind, rotationDeg, turnDeg, fileTrueNorth, terrain: src.tris.length ? turn(src.tris) : null, terrainElements: src.elements, elements, interior, mep, word };
+  return { name: opts.name, kind, rotationDeg, turnDeg, align: align ?? (turnDeg ? { ...NO_ALIGN, deg: turnDeg } : NO_ALIGN), fileTrueNorth, terrain: src.tris.length ? turn(src.tris) : null, terrainElements: src.elements, elements, interior, mep, word };
 }
 
 /** which files beside the house are projected: the user's word, else the default — `_Site.ifc` yes, any other no */

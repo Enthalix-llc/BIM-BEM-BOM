@@ -31,6 +31,9 @@ interface CorrectionsLedger {
   /** A PER-FILE TURN (user, 2026-09-15, C1: "rotate a very small angle (0.65 deg CW) — a per file rotation tool"): degrees
    *  clockwise seen from above, added to the file's own TrueNorth turn into the house frame; keyed by file name */
   siteFileTurn?: Record<string, number>;
+  /** THE PLACEMENT of each linked file (2026-11-03, the alignment dialog): a move and a turn about a locked pivot on top of its
+   *  TrueNorth turn, in the house frame (siteAlign.ts) — replaces siteFileTurn for that file once accepted */
+  siteFileAlign?: Record<string, { dx: number; dy: number; dz: number; deg: number; px: number; pz: number; at?: string }>;
   /** THE VOID RULINGS (user, 2026-09-18: "When spaces are created, flag the
    *  suspected spaces of concern and provide a dialogue box that asks where the
    *  insulation resides (at roof or at ceiling level)"): per space the void QA

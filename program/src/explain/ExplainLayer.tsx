@@ -24,6 +24,7 @@ const RULES: Array<{ region: string; sel: string; scoped: boolean; whole?: boole
   { region: "Levels and spaces", sel: ".tree .treeHead", scoped: false, whole: true },
   { region: "Rail", sel: ".rail", scoped: false, whole: true },
   { region: "Top bar", sel: ".topbar", scoped: false, whole: true },
+  { region: "Alignment", sel: ".alignDialog .dialogHead", scoped: false, whole: true },
 ];
 
 const DWELL_MS = 300;

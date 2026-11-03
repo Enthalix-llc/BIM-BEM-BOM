@@ -391,14 +391,18 @@ export function queryMepSystems(db: Database): MepSystemRow[] {
 /** THE FILES BESIDE THE HOUSE (user, 2026-09-07): every IFC in the opened
  *  file's folder — the site model, a shade model — with what each holds and
  *  whether it is projected into the model; the SITE table reads this back */
-export interface SiteFileRow { name: string; sha256: string; bytes: number; kind: "site" | "shade" | "unread"; projected: boolean; terrainTris: number; elements: number; word: string; /** the user's extra turn, ° clockwise (2026-09-15) */ turnDeg: number }
+export interface SiteFileRow { name: string; sha256: string; bytes: number; kind: "site" | "shade" | "unread"; projected: boolean; terrainTris: number; elements: number; word: string; /** the user's extra turn, ° clockwise (2026-09-15) */ turnDeg: number;
+  /** THE PLACEMENT (2026-11-03): the move (metres, the house frame) and the pivot the turn is about — siteAlign.ts */
+  dx?: number; dy?: number; dz?: number; pivotX?: number; pivotZ?: number }
 export function writeSiteFiles(db: Database, files: SiteFileRow[]): void {
   db.run(`
     DROP TABLE IF EXISTS site_files;
-    CREATE TABLE site_files (name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, kind TEXT NOT NULL, projected INTEGER NOT NULL, terrain_tris INTEGER NOT NULL, elements INTEGER NOT NULL, word TEXT NOT NULL, turn_deg REAL NOT NULL DEFAULT 0);
+    CREATE TABLE site_files (name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, kind TEXT NOT NULL, projected INTEGER NOT NULL, terrain_tris INTEGER NOT NULL, elements INTEGER NOT NULL, word TEXT NOT NULL, turn_deg REAL NOT NULL DEFAULT 0,
+      -- the user's placement on top of the TrueNorth turn: a move in metres (x east, y up, z south) and the pivot of turn_deg
+      dx_m REAL NOT NULL DEFAULT 0, dy_m REAL NOT NULL DEFAULT 0, dz_m REAL NOT NULL DEFAULT 0, pivot_x_m REAL NOT NULL DEFAULT 0, pivot_z_m REAL NOT NULL DEFAULT 0);
   `);
-  const put = db.prepare("INSERT INTO site_files VALUES (?,?,?,?,?,?,?,?,?)");
-  for (const f of files) put.run([f.name, f.sha256, f.bytes, f.kind, f.projected ? 1 : 0, f.terrainTris, f.elements, f.word, f.turnDeg ?? 0]);
+  const put = db.prepare("INSERT INTO site_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  for (const f of files) put.run([f.name, f.sha256, f.bytes, f.kind, f.projected ? 1 : 0, f.terrainTris, f.elements, f.word, f.turnDeg ?? 0, f.dx ?? 0, f.dy ?? 0, f.dz ?? 0, f.pivotX ?? 0, f.pivotZ ?? 0]);
   put.free();
 }
 export function querySiteFiles(db: Database): SiteFileRow[] {
@@ -406,11 +410,13 @@ export function querySiteFiles(db: Database): SiteFileRow[] {
   const has = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='site_files'");
   if (!has.length || !has[0]!.values.length) return out;
   // an older file's table has no turn_deg column (it is dropped and remade on every projection): read it when it is there
-  const hasTurn = (db.exec("PRAGMA table_info(site_files)")[0]?.values ?? []).some((r) => String(r[1]) === "turn_deg");
-  const st = db.prepare(`SELECT name, sha256, bytes, kind, projected, terrain_tris, elements, word${hasTurn ? ", turn_deg" : ", 0"} FROM site_files ORDER BY name`);
+  const cols = new Set((db.exec("PRAGMA table_info(site_files)")[0]?.values ?? []).map((r) => String(r[1])));
+  const col = (c: string): string => (cols.has(c) ? `, ${c}` : ", 0");
+  const st = db.prepare(`SELECT name, sha256, bytes, kind, projected, terrain_tris, elements, word${col("turn_deg")}${col("dx_m")}${col("dy_m")}${col("dz_m")}${col("pivot_x_m")}${col("pivot_z_m")} FROM site_files ORDER BY name`);
   while (st.step()) {
-    const r = st.get() as [string, string, number, string, number, number, number, string, number];
-    out.push({ name: r[0], sha256: r[1], bytes: r[2], kind: r[3] as SiteFileRow["kind"], projected: r[4] === 1, terrainTris: r[5], elements: r[6], word: r[7], turnDeg: Number(r[8]) || 0 });
+    const r = st.get() as [string, string, number, string, number, number, number, string, number, number, number, number, number, number];
+    out.push({ name: r[0], sha256: r[1], bytes: r[2], kind: r[3] as SiteFileRow["kind"], projected: r[4] === 1, terrainTris: r[5], elements: r[6], word: r[7], turnDeg: Number(r[8]) || 0,
+      dx: Number(r[9]) || 0, dy: Number(r[10]) || 0, dz: Number(r[11]) || 0, pivotX: Number(r[12]) || 0, pivotZ: Number(r[13]) || 0 });
   }
   st.free();
   return out;
