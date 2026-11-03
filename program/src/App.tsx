@@ -110,6 +110,7 @@ import { ieccFor, codeCatalogue, catalogueKindOf, type IdfModel } from "./module
 import { parseTariffs, withSample, cardInForce } from "./modules/bom/core/tariff.js";
 import SAMPLE_TARIFF_JSON from "./modules/bom/reference/sample-tariff.json?raw";
 import { BomCostView, BomCostTables, BomFrame, TariffDetails, WeatherMaker, priceBoth, type BomRail, type BomCardSel } from "./modules/bom/view/BomCost.js";
+import type { ZoneSide } from "./modules/bem/core/modelChecks.js";
 import { withLayers, nextAddedSeq, climateZoneOf, type BemLedger, type SiteRuling, type ConstructionRuling, type GroundRuling, type LayerPick, type LayerCustom, type SystemsRuling, type GenerationRuling, type GainRulings } from "./modules/bem/core/bemDb.js";
 import { SCHEDULE_FILES, parseScheduleObjects, profileFor, readProfiles, fitsRole, scheduleFileName, ROLE_KIND, ROLE_LABELS, CODE_DEFAULT_SCHEDULE, DEFAULT_PROFILE_REF, type ScheduleRole, type ScheduleRef } from "./modules/bem/core/schedules.js";
 import { ScheduleCalendar, type CalAt } from "./modules/bem/view/ScheduleCalendar.js";
@@ -2305,6 +2306,16 @@ export function App(): React.ReactElement {
     setSysStage((st) => { const n = { ...st }; if (sys.generation) n.generation = sys.generation; else delete n.generation; return n; });
     await applyBemLedger(next, []);
   };
+  /** A SIDE LEFT OFF, APPROVED (user, 2026-11-03): saved at once with the project (no Apply), the model rebuilt so its checks read it */
+  const approveSide = async (zone: string, side: ZoneSide, on: boolean): Promise<void> => {
+    const next: BemLedger = { ...ledgerOf() };
+    const all = { ...(next.sideApprovals ?? {}) }, z = { ...(all[zone] ?? {}) };
+    if (on) z[side] = new Date().toISOString(); else delete z[side];
+    if (Object.keys(z).length) all[zone] = z; else delete all[zone];
+    if (Object.keys(all).length) next.sideApprovals = all; else delete next.sideApprovals;
+    setStatus(on ? `${zone} approved to run without ${side} — rebuilding the model` : `${zone}: the approval to run without ${side} taken back`);
+    await applyBemLedger(next, []);
+  };
   const setPlumbAssembly = useCallback((a: Assembly): void => { setSysStage((st) => ({ ...st, dhw: { ...(st.dhw ?? {}), assembly: a } })); }, []);
   /** the PLUMBING sheet's Save (2026-10-02): applied on its own, as the ELECTRICAL sheet's is — the sheet governs the water heaters */
   const savePlumbing = async (): Promise<void> => {
@@ -2362,6 +2373,13 @@ export function App(): React.ReactElement {
     ...(idfRowsRef.current.length === 0 ? [{ what: "no envelope is built", how: "open an IFC file in BIM", tab: "bim-edit" as TabId }] : []),
     ...(bemModel?.report.codeGap ? [{ what: `the energy code's values are incomplete — ${bemModel.report.codeGap}`, how: "enter them in SITE › energy code › Choose… › Edit values…", tab: "bem-site" as TabId }] : []),
     ...runStaged.map((x) => ({ what: `${x.what} staged and not applied`, how: `Apply or Save it on ${TABS.find((t) => t.id === x.tab)?.label ?? x.tab}`, tab: x.tab })),
+    // A SIDE LEFT OFF (user, 2026-11-03): each zone whose heating or cooling is switched off on its Zone card, naming its rooms,
+    // until the side is switched on or approved here
+    ...(bemModel?.checks ?? []).flatMap((c) => (c.rule === "zone-sides" && c.sides ? c.sides.off.filter((s) => !c.sides!.approved.includes(s)).map((side) => ({
+      what: `${c.subject}: ${side} is switched off${c.sides!.rooms.length ? ` — ${c.sides!.rooms.join(", ")}` : ""}`,
+      how: `switch it on in the Zone card's thermostat (SYSTEMS › MECHANICAL), or approve running ${c.subject} without ${side}`, tab: "bem-systems" as TabId,
+      approve: { label: `approve: ${c.subject} runs without ${side}`, onApprove: () => void approveSide(c.subject, side, true) },
+    })) : [])),
   ];
   // the box clears itself once nothing stands in the way
   useEffect(() => { if (runBlocked && runBlocks.length === 0) { setRunBlocked(false); setStatus("nothing stands in the way of the run — Run EnergyPlus when ready"); } }, [runBlocked, runBlocks.length]);
@@ -4274,7 +4292,7 @@ export function App(): React.ReactElement {
           </div>
         </>
       )}
-      {runBlocked && runBlocks.length > 0 && <RunBlockedDialog blocks={runBlocks} tabLabel={(t) => TABS.find((x) => x.id === t)?.label ?? t} onGo={(t) => setTab(t)} onClose={() => setRunBlocked(false)} />}
+      {runBlocked && runBlocks.length > 0 && <RunBlockedDialog blocks={runBlocks} tabLabel={(t) => TABS.find((x) => x.id === t)?.label ?? t} onGo={(t) => setTab(t)} onClose={() => setRunBlocked(false)} busy={bemBusy} />}
       {fenDialog && <FenestrationDialog state={fenDialog} onState={setFenDialog} imperial={imperial} onSave={saveFenestration} onDelete={(k) => void deleteFenestration(k)} onCancel={() => setFenDialog(null)} />}
       {dialog && <MaterialDialog state={dialog} onState={setDialog} imperial={imperial} layerLabel={`layer ${layerPos(dialog.seq)}${detailRow ? ` of ${detailName ?? detailRow.label}` : ""}`} onSave={saveHand} onDelete={(k) => void removeMaterial(k)} canDelete={!!dialog.editFrom && (materialsRef.current?.rows.find((r) => r.key === dialog.editFrom)?.sourceId === "hand" || materialsRef.current?.rows.find((r) => r.key === dialog.editFrom)?.sourceId === "bcl")} onCancel={() => setDialog(null)} />}
       {menu && (
@@ -4836,7 +4854,7 @@ export function App(): React.ReactElement {
             <BemRun structures={runStructures} onCosts={() => setTab("bom-ops")} model={bemModel} bem={bem} engine={bemEngine} idfReady={idfRowsRef.current.length > 0} running={bemRunning}
               lastLine={bemLog[bemLog.length - 1] ?? ""} validation={validation} lens={lens} legend={legend} imperial={imperial} stagedNote={runStagedNote}
               onValidate={() => void validateModel()} onRun={() => (runBlocks.length ? setRunBlocked(true) : void runBem())} onLens={(l) => applyLens(l)}
-              onDock={(d) => toggleSection(d)} isOpen={(d) => open.has(d)} onPrint={() => printAs(`BEM · Run report — ${projectName}`)} />
+              onDock={(d) => toggleSection(d)} isOpen={(d) => open.has(d)} onPrint={() => printAs(`BEM · Run report — ${projectName}`)} onApproveSide={(z, side, on) => void approveSide(z, side, on)} busy={bemBusy} />
           )}
           {module === "bem" && tab === "bem-run" && bem && (
             <RunReport bem={bem} model={bemModel} imperial={imperial} project={(pathRef.current.split(/[\\/]/).pop() ?? "").replace(/\.ifc$/i, "")} />

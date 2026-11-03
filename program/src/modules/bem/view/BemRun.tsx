@@ -11,7 +11,7 @@
 // every section is a roll-up whose number stays on the screen when folded.
 
 import { perRun } from "../core/runCalendar.js";
-import { CHECK_RULES } from "../core/modelChecks.js";
+import { CHECK_RULES, type ZoneSide } from "../core/modelChecks.js";
 import type { BemOutcome, BemModelOutcome } from "../pipeline.js";
 import type { Lens, Legend } from "../core/bemPaint.js";
 import { KV, Fold, fmtPower, fmtEnergyArea, fmtFlowAir, fmtFlowWater, baseName, engineName } from "./bemUi.js";
@@ -44,6 +44,9 @@ export interface BemRunProps {
   isOpen: (d: string) => boolean;
   /** the printed report (RunReport): the results and both graphs, through the system print dialog — Save as PDF is in it */
   onPrint: () => void;
+  /** a side left off on a Zone card, approved or taken back (2026-11-03) */
+  onApproveSide: (zone: string, side: ZoneSide, on: boolean) => void;
+  busy: boolean;
 }
 
 const STORE = "bem-run-folds";
@@ -102,7 +105,11 @@ export function BemRun(p: BemRunProps): React.ReactElement {
               {[...open, ...notes, ...ck.filter((c) => c.verdict === "ok")].map((c, i) => (
                 <tr key={i} title={`${c.rule}: ${CHECK_RULES[c.rule] ?? ""}${c.fix ? `\nchanged in ${c.fix}` : ""}`}>
                   <td className={c.verdict === "fail" || c.verdict === "warn" ? "src-warn" : c.verdict === "note" ? "src-code" : "muted"}>{c.verdict === "ok" ? "✓" : c.verdict === "note" ? "note" : c.verdict === "fail" ? "✗" : "!"}</td>
-                  <td>{c.subject}</td><td>{c.text}{c.fix && c.verdict !== "ok" ? <span className="muted"> — {c.fix}</span> : null}</td>
+                  <td>{c.subject}</td><td>{c.text}{c.fix && c.verdict !== "ok" ? <span className="muted"> — {c.fix}</span> : null}
+                    {c.sides && c.sides.off.map((side) => (
+                      <label key={side} className="runApprove" title="ticked, the model runs with this side off; unticked, the run stops until it is switched on or approved">
+                        <input type="checkbox" checked={c.sides!.approved.includes(side)} disabled={p.busy} onChange={(e) => p.onApproveSide(c.subject, side, e.target.checked)} /> approve: {c.subject} runs without {side}</label>
+                    ))}</td>
                 </tr>
               ))}
             </tbody></table></div>

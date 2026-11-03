@@ -14,12 +14,14 @@ import type { PlumbCompiled } from "./plumbSheet.js";
 import type { AsmNode } from "./assembly.js";
 
 export type CheckVerdict = "ok" | "note" | "warn" | "fail";
-/** one answer: the rule asked, what it was asked of, the verdict, in words, and where it is changed */
-export interface CheckRow { rule: string; subject: string; verdict: CheckVerdict; text: string; fix: string }
+export type ZoneSide = "heating" | "cooling";
+/** one answer: the rule asked, what it was asked of, the verdict, in words, and where it is changed; a zone-sides row also
+ *  names the sides switched off, those approved, and the zone's rooms (the run's QA reads them; bem.db keeps them in checks.data) */
+export interface CheckRow { rule: string; subject: string; verdict: CheckVerdict; text: string; fix: string; sides?: { off: ZoneSide[]; approved: ZoneSide[]; rooms: string[] } }
 
 export const CHECK_RULES: Record<string, string> = {
   "idf-db": "the model is written from idf.db alone — every ruling, library object and the weather held there as values (2026-10-07)",
-  "zone-sides": "each zone a system serves is heated and cooled — a side switched off on its Zone card is named",
+  "zone-sides": "each zone a system serves is heated and cooled — a side switched off on its Zone card stops the run until it is switched on or approved (2026-11-03)",
   "zone-system": "each conditioned zone is served by a system on the sheet",
   "room-conditioning": "each room's default gains as written — a room the gains read as unoccupied (a garage) takes none, whatever conditions its zone",
   "room-zone": "each room with a floor is in a Zone drawn on the sheet",
@@ -39,6 +41,8 @@ export interface CheckInput {
   plumbing: PlumbCompiled | null;
   /** the rulings not honoured, by where they are set */
   unresolved: Array<{ where: string; items: string[] }>;
+  /** the sides the user approved left off, by Zone card name (BemLedger.sideApprovals) */
+  approvals?: Record<string, { heating?: string; cooling?: string }>;
 }
 
 export function modelChecks(c: CheckInput): CheckRow[] {
@@ -65,9 +69,15 @@ export function modelChecks(c: CheckInput): CheckRow[] {
     const f = card ? c.nodes.find((n) => n.id === card.id)?.fields ?? {} : {};
     const hOff = f[THERMOSTAT_SIDE_FIELD.heating] === "off", cOff = f[THERMOSTAT_SIDE_FIELD.cooling] === "off";
     const heats = cap.heat && !hOff, cools = cap.cool && !cOff;
-    const off = [hOff && cap.heat ? "heating" : "", cOff && cap.cool ? "cooling" : ""].filter(Boolean);
-    if (off.length) put("zone-sides", z, "warn", `${off.join(" and ")} switched off on its Zone card — ${s} can ${off.map((x) => (x === "heating" ? "heat" : "cool")).join(" and ")}; the zone is ${heats ? "heated only" : cools ? "cooled only" : "neither heated nor cooled"}`, "SYSTEMS › MECHANICAL — the Zone card's thermostat");
-    else if (!cap.heat || !cap.cool) put("zone-sides", z, "note", `${heats ? "heated only" : cools ? "cooled only" : "neither heated nor cooled"} — ${cap.why || s}`, "SYSTEMS › MECHANICAL — the equipment on the sheet");
+    const off = [hOff && cap.heat ? "heating" : "", cOff && cap.cool ? "cooling" : ""].filter(Boolean) as ZoneSide[];
+    if (off.length) {
+      // THE RUN'S QA (user, 2026-11-03): a side left off stops the run until it is switched on or the user approves it
+      const ap = c.approvals?.[z] ?? {}, approved = off.filter((x) => ap[x]), open = off.filter((x) => !ap[x]);
+      const rooms = c.gains.rooms.filter((r) => r.zone === z && r.floorM2 > 0).map((r) => r.room).sort();
+      const what = `${off.join(" and ")} switched off on its Zone card — ${s} can ${off.map((x) => (x === "heating" ? "heat" : "cool")).join(" and ")}; the zone is ${heats ? "heated only" : cools ? "cooled only" : "neither heated nor cooled"}`;
+      const said = approved.length ? ` — ${approved.join(" and ")} off approved by you ${ap[approved[0]!]!.slice(0, 10)}` : "";
+      out.push({ rule: "zone-sides", subject: z, verdict: open.length ? "warn" : "note", text: what + said, fix: "SYSTEMS › MECHANICAL — the Zone card's thermostat, or approve it in the run's QA", sides: { off, approved, rooms } });
+    } else if (!cap.heat || !cap.cool) put("zone-sides", z, "note", `${heats ? "heated only" : cools ? "cooled only" : "neither heated nor cooled"} — ${cap.why || s}`, "SYSTEMS › MECHANICAL — the equipment on the sheet");
     else put("zone-sides", z, "ok", `heated and cooled by ${s}`);
   }
 

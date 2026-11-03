@@ -322,6 +322,8 @@ On a computer without a graphics card (a virtual machine, a remote desktop, a bu
 
 When something stands in the way of the run (a change staged and not applied, the energy code's values incomplete, no envelope, no EnergyPlus), clicking **Run EnergyPlus** opens a box that names each reason, with a button to the tab where it is resolved. The box stays open while you work and closes by itself once nothing is left in the way.
 
+A zone whose heating or cooling is switched off on its Zone card also stops the run. The box names the zone, the side and the zone's rooms. Switch the side back on in SYSTEMS › MECHANICAL, or tick **approve** to run without it. An approval is saved with the project at once and shown in the **checks** fold, where unticking it takes it back. It does not change the model.
+
 ## OPERATIONS
 BOM's one tab: the tariff, the bills and the PV, and the calibration year.
 

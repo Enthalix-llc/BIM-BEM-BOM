@@ -1252,6 +1252,8 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 /* why the run cannot go (2026-10-16): floats over the view without a scrim, so the tabs stay usable until it clears */
 .dialog.runBlocked { position: fixed; top: 72px; left: max(16px, calc(55vw - 560px)); width: min(560px, calc(100vw - 32px)); z-index: 55; border-color: var(--warn); }
 .dialog.runBlocked ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }
+.runApprove { display: flex; align-items: center; gap: 6px; margin-top: 3px; cursor: pointer; font-size: 12px; }
+.runApprove input { margin: 0; }
 
 /* 5 · COST TABLES in the BOM column (2026-10-23): the tables scroll sideways inside the column, the totals under them */
 .bomCostCol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }

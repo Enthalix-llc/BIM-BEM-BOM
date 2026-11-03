@@ -541,7 +541,7 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
     { key: "solar_distribution", value: site.solarDistribution, source: src(r.solarDistribution) },
   ];
   // THE CHECKS (the user, 2026-10-06): the questions asked of every build, answered from what it resolved
-  const checks = modelChecks({ drawn, nodes: ledger?.systems?.assembly?.nodes ?? [], sys, gains, conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), plumbing: dhw,
+  const checks = modelChecks({ drawn, nodes: ledger?.systems?.assembly?.nodes ?? [], sys, gains, conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), plumbing: dhw, approvals: ledger?.sideApprovals,
     unresolved: [{ where: "ZONES", items: unresolvedZones }, { where: "CONSTRUCTIONS", items: cons.unresolved }, { where: "SCHEDULES", items: sched.unresolved },
       { where: "SYSTEMS", items: sys.unresolved.filter((x) => !x.startsWith("PLUMBING: ")) }, { where: "ZONES › gains", items: gains.unresolved }] });
   return { checks, model: { ...base, climateZone: countyZone?.zone || undefined, energyCode: codeId, zones, site, constructions: cons.map, ...(doorGlass.size ? { doorGlass } : {}), ...(vegetated.size ? { vegetated } : {}), ground: ledger?.ground, schedules: sched.map, holidays: projectHolidayDays(ledger).length ? projectHolidayDays(ledger) : undefined, systems: sys, systemSchedules, gains, shading: input.siteElements, pv, voidRulings, ...(tariff?.card.charges ? { tariff } : {}), ...(meters.length ? { meters } : {}) }, input, settings, unresolvedZones, unresolvedConstructions: cons.unresolved, unresolvedSchedules: sched.unresolved, unresolvedSystems: sys.unresolved, unresolvedGains: gains.unresolved };

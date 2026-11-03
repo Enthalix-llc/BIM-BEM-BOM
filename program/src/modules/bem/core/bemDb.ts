@@ -14,7 +14,7 @@
 // read: the model as run, the runs, and the results the paint and the tables
 // need, in one long table keyed by scope / key / month / metric.
 
-import type { CheckRow } from "./modelChecks.js";
+import type { CheckRow, ZoneSide } from "./modelChecks.js";
 import type { ScheduleDays } from "./scheduleDays.js";
 import type { DaySetDef } from "./scheduleParts.js";
 import type { Database, SqlJsStatic } from "sql.js";
@@ -312,6 +312,10 @@ export interface BemLedger {
   systems?: SystemsRuling;
   /** the ZONES tab's gain rulings (2026-09-13), by zone and by room; absent = the cited residential defaults on every conditioned room */
   gains?: GainRulings;
+  /** A SIDE LEFT OFF, APPROVED (user, 2026-11-03: "that qa should allow for a checkbox to approve the lack of heating and/or
+   *  cooling"): by the Zone card's name, when the user approved its heating / cooling switched off. An approved side does not
+   *  stop the run; a side switched back on makes its approval moot (it is kept, and read again if the side goes off) */
+  sideApprovals?: Record<string, { heating?: string; cooling?: string }>;
   /** STAGED, NOT YET APPLIED (2026-09-09): what the CONSTRUCTIONS and SITE
    *  tabs hold on their Apply buttons, written as it is staged so a restart
    *  keeps the user's work (the user, 2026-09-09: "the idf db changes were
@@ -368,7 +372,7 @@ CREATE TABLE IF NOT EXISTS constructions (name TEXT PRIMARY KEY, kind TEXT NOT N
 CREATE TABLE IF NOT EXISTS schedules (role TEXT PRIMARY KEY, name TEXT NOT NULL, file TEXT NOT NULL, cls TEXT NOT NULL, type_limits TEXT, source TEXT NOT NULL, weekday TEXT, weekend TEXT, blocks INTEGER NOT NULL, in_use INTEGER NOT NULL, note TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS systems (id TEXT PRIMARY KEY, section TEXT NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL, source TEXT NOT NULL, zones TEXT NOT NULL, objects INTEGER NOT NULL, object_names TEXT NOT NULL, fields TEXT NOT NULL, refused TEXT NOT NULL, note TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS system_qa (subject TEXT NOT NULL, kind TEXT NOT NULL, cls TEXT NOT NULL, gaps INTEGER NOT NULL, checks TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS checks (rule TEXT NOT NULL, subject TEXT NOT NULL, verdict TEXT NOT NULL, text TEXT NOT NULL, fix TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS checks (rule TEXT NOT NULL, subject TEXT NOT NULL, verdict TEXT NOT NULL, text TEXT NOT NULL, fix TEXT NOT NULL, data TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS rooms (
   room TEXT PRIMARY KEY, zone TEXT NOT NULL, ep_name TEXT NOT NULL, floor_m2 REAL NOT NULL, conditioned INTEGER NOT NULL,
   people REAL NOT NULL, people_source TEXT NOT NULL, people_note TEXT NOT NULL,
@@ -429,6 +433,9 @@ export function openBemDb(SQL: SqlJsStatic, bytes: Uint8Array | null): Database 
   // 2026-10-08: a blower-door ruling's words per zone (its leakage area and coefficients)
   const zc = (db.exec("PRAGMA table_info(zones)")[0]?.values ?? []).map((r) => String(r[1]));
   if (!zc.includes("infiltration_note")) db.run("ALTER TABLE zones ADD COLUMN infiltration_note TEXT NOT NULL DEFAULT ''");
+  // 2026-11-03: a check's own facts as JSON (a zone-sides row: the sides switched off, those approved, the zone's rooms)
+  const kc = (db.exec("PRAGMA table_info(checks)")[0]?.values ?? []).map((r) => String(r[1]));
+  if (!kc.includes("data")) db.run("ALTER TABLE checks ADD COLUMN data TEXT NOT NULL DEFAULT ''");
   return db;
 }
 
@@ -467,8 +474,8 @@ export function writeModel(
   const qput = db.prepare("INSERT INTO system_qa VALUES (?,?,?,?,?)");
   for (const r of qa) qput.run([r.subject, r.kind, r.cls, r.gaps, JSON.stringify(r.checks)]);
   qput.free();
-  const cput = db.prepare("INSERT INTO checks VALUES (?,?,?,?,?)");
-  for (const r of checks) cput.run([r.rule, r.subject, r.verdict, r.text, r.fix]);
+  const cput = db.prepare("INSERT INTO checks (rule, subject, verdict, text, fix, data) VALUES (?,?,?,?,?,?)");
+  for (const r of checks) cput.run([r.rule, r.subject, r.verdict, r.text, r.fix, r.sides ? JSON.stringify({ sides: r.sides }) : ""]);
   cput.free();
   const sha = modelSha(db);
   putMeta(db, "model_sha256", sha);
@@ -941,8 +948,19 @@ export function queryRooms(db: Database): BemRoomRow[] {
 export function queryChecks(db: Database): CheckRow[] {
   const has = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='checks'");
   if (!has.length || !has[0]!.values.length) return [];
-  const r = db.exec("SELECT rule, subject, verdict, text, fix FROM checks ORDER BY rowid");
-  return (r[0]?.values ?? []).map((v) => ({ rule: String(v[0]), subject: String(v[1]), verdict: String(v[2]) as CheckRow["verdict"], text: String(v[3]), fix: String(v[4]) }));
+  const hasData = (db.exec("PRAGMA table_info(checks)")[0]?.values ?? []).some((c) => String(c[1]) === "data");
+  const r = db.exec(`SELECT rule, subject, verdict, text, fix, ${hasData ? "data" : "''"} FROM checks ORDER BY rowid`);
+  return (r[0]?.values ?? []).map((v) => {
+    const row: CheckRow = { rule: String(v[0]), subject: String(v[1]), verdict: String(v[2]) as CheckRow["verdict"], text: String(v[3]), fix: String(v[4]) };
+    const data = String(v[5] ?? "");
+    if (data) { const d = JSON.parse(data) as Pick<CheckRow, "sides">; if (d.sides) row.sides = d.sides; }
+    else if (row.rule === "zone-sides" && row.verdict === "warn") {
+      // a file written before 2026-11-03 holds the sides only in the words: read them so a side left off still stops the run
+      const m = /^(heating|cooling)(?: and (heating|cooling))? switched off on its Zone card/.exec(row.text);
+      if (m) row.sides = { off: [m[1], m[2]].filter(Boolean) as ZoneSide[], approved: [], rooms: [] };
+    }
+    return row;
+  });
 }
 /** the systems the model runs on, per subsection, as written (2026-09-10) — the tab reads them back */
 export interface BemSystemRow { id: string; section: SystemSection; kind: string; label: string; source: Source; zones: string[]; objects: number; objectNames: string[]; fields: Array<{ obj: string; key: string; label: string; value: string; source: Source; units: string | null }>; refused: string[]; note: string }
