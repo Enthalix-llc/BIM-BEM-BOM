@@ -27,6 +27,7 @@ export const CHECK_RULES: Record<string, string> = {
   "room-zone": "each room with a floor is in a Zone drawn on the sheet",
   "not-honoured": "every ruling is written — none refused or left out",
   "plumbing": "the plumbing sheet's heaters and uses are written as drawn",
+  "pv-sheet": "the ELECTRICAL sheet's PV is written as drawn — an array refused (a panel inside a room, missing, or held twice) stops the run (2026-11-03)",
   "erv-flow": "each ERV's rated outdoor air meets the code's (ASHRAE 62.2) for the floor it serves — the ERV's flow is written either way; below the code is a warning (2026-10-07)",
 };
 
@@ -41,6 +42,8 @@ export interface CheckInput {
   plumbing: PlumbCompiled | null;
   /** the rulings not honoured, by where they are set */
   unresolved: Array<{ where: string; items: string[] }>;
+  /** the ELECTRICAL sheet's PV, when drawn: what it could not write, and how many array cards it has */
+  pv?: { refused: string[]; arrays: number } | null;
   /** the sides the user approved left off, by Zone card name (BemLedger.sideApprovals) */
   approvals?: Record<string, { heating?: string; cooling?: string }>;
 }
@@ -110,6 +113,11 @@ export function modelChecks(c: CheckInput): CheckRow[] {
   for (const u of c.unresolved) for (const t of u.items) { put("not-honoured", u.where, "fail", t, u.where); refused++; }
   if (!refused) put("not-honoured", "every ruling", "ok", "every ruling is written");
 
+  // THE PV AS DRAWN (user, 2026-11-03): a PV array the sheet holds and the build cannot write is never silent — it stops the run
+  if (c.pv) {
+    for (const t of c.pv.refused) put("pv-sheet", "PV", "fail", t, "SYSTEMS › ELECTRICAL — the array card, or BIM › Edit Alignment");
+    if (!c.pv.refused.length) put("pv-sheet", "PV", "ok", `${c.pv.arrays} array${c.pv.arrays === 1 ? "" : "s"} written as drawn`);
+  }
   // PLUMBING: the sheet's refusals and cautions as compiled
   if (c.plumbing) {
     for (const r of c.plumbing.refusals) put("plumbing", "the sheet", "fail", r.text, "SYSTEMS › PLUMBING");

@@ -69,6 +69,7 @@ The alignment dialog places a file beside the house (the site, the MEP) against 
 - **TURN** turns the file clockwise or counter-clockwise, seen from above, about the **pivot**.
 - **Pick pivot…**: click a point in the IFC view. The file turns about the vertical line through it (drawn in yellow), so a point the file and the house share stays together while you turn.
 - **Match a point…**: click a point on the file, then the house point it belongs on. The file moves there, and that point becomes the pivot. Then turn to bring the rest in line.
+- **PV ON THE ROOF**, for a file with PV panels, gives each panel's lowest corner above the house's roof under it, as the file is placed now: the lowest and highest gap, the spread, and how many panels are under the roof. The same gap on every panel (a spread near 0) means the file sits square to the house. A panel under the roof is left inside its room, and the PV array that holds it is not written, which stops the run. The gap only measures; no panel is moved.
 - The file moves in the views as you work; nothing is kept until **Accept**. Accept stores the placement with your corrections and in ifc.db (`site_files`: the move, the pivot and the turn), projects the files again and rebuilds idf.db. **Cancel** puts the file back. **Reset** returns it to its TrueNorth turn alone.
 
 # View

@@ -92,8 +92,10 @@ export function withTodaysLabels(asm: Assembly | undefined): Assembly | undefine
 }
 const fieldsOf = (n: AsmNode): SystemFields => { const f: SystemFields = { ...(n.fields ?? {}) }; delete f[PANELS_FIELD]; delete f[ZONES_FIELD]; return f; };
 
-/** the sheet → the load centers the writer emits. `available` = the panels the projected files carry; absent, any id is taken */
-export function compileElectrical(asm: Assembly, available?: ReadonlySet<number>): ElecCompiled {
+/** the sheet → the load centers the writer emits. `available` = the panels the projected files carry; absent, any id is taken.
+ *  `inRoom` = the panels the projection left out because they now lie inside a room (panel → the room): named as such, since a panel
+ *  under the roof is a placement to check, not a panel the file lacks (user, 2026-11-03: the panels "slid under the roof with MEP rotation") */
+export function compileElectrical(asm: Assembly, available?: ReadonlySet<number>, inRoom?: ReadonlyMap<number, string>): ElecCompiled {
   const refusals: ElecCompiled["refusals"] = [], cautions: ElecCompiled["cautions"] = [];
   const refuse = (n: AsmNode, text: string): void => { refusals.push({ node: n.id, text: `${nameOf(n)} ${text}` }); };
   const of = (cls: string): AsmNode[] => asm.nodes.filter((n) => n.kind === "component" && n.cls === cls);
@@ -104,12 +106,17 @@ export function compileElectrical(asm: Assembly, available?: ReadonlySet<number>
   const goodArrays = new Map<string, { a: ElecArray; inverter: string }>();
   for (const n of of(ELEC_CLASS.array)) {
     const ids = panelsOf(n);
-    const absent = available ? ids.filter((x) => !available.has(x)) : [];
+    const missing = available ? ids.filter((x) => !available.has(x)) : [];
+    const under = missing.filter((x) => inRoom?.has(x)), absent = missing.filter((x) => !inRoom?.has(x));
     const twice = ids.filter((x) => owner.has(x));
     for (const x of ids) if (!owner.has(x)) owner.set(x, n.id);
     const inv = linesFrom(n, "dc-out").filter((x) => x.cls === ELEC_CLASS.inverter);
     let ok = true;
     if (!ids.length) { refuse(n, "holds no panel — tick its panels in the column"); ok = false; }
+    if (under.length) {
+      const rooms = [...new Set(under.map((x) => inRoom!.get(x)!))].sort();
+      refuse(n, `holds ${under.length} panel${under.length === 1 ? "" : "s"} that now lie${under.length === 1 ? "s" : ""} inside ${rooms.join(", ")} (#${under.slice(0, 4).join(", #")}${under.length > 4 ? " …" : ""}) — the file's placement puts ${under.length === 1 ? "it" : "them"} under the roof: check the roof gap in Edit Alignment, or untick ${under.length === 1 ? "it" : "them"}`); ok = false;
+    }
     if (absent.length) { refuse(n, `holds ${absent.length} panel${absent.length === 1 ? "" : "s"} the projected files do not carry (#${absent.slice(0, 4).join(", #")}${absent.length > 4 ? " …" : ""}) — project the file on SITE, or untick them`); ok = false; }
     if (twice.length) { refuse(n, `holds ${twice.length} panel${twice.length === 1 ? "" : "s"} another array already holds (#${twice.slice(0, 4).join(", #")}${twice.length > 4 ? " …" : ""}) — a panel is in one array`); ok = false; }
     if (!inv.length) { refuse(n, "— its DC out runs to no inverter: connect it to an inverter's DC in"); ok = false; }

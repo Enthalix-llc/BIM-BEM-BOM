@@ -87,3 +87,46 @@ export function alignOf(name: string, align: Record<string, FileAlign> | undefin
   const t = turn?.[name] ?? 0;
   return t ? { ...NO_ALIGN, deg: t } : NO_ALIGN;
 }
+
+/** a placed point back to the file's TrueNorth-turned frame: the inverse of alignPoint, so a draft placement can be measured on
+ *  geometry stored under the accepted one */
+export function unalignPoint(p: V3, a: FileAlign): V3 {
+  if (isIdentity(a)) return p;
+  const [ux, uz] = unturn(p[0] - a.px, p[2] - a.pz, a.deg);
+  return [ux - a.dx + a.px, p[1] - a.dy, uz - a.dz + a.pz];
+}
+
+/** THE ROOF GAP (user, 2026-11-03: "The PV panels apparently slid under the roof with MEP rotation"): each panel's lowest corner
+ *  above the house's roof under it — the highest roof plane whose outline holds the corner in plan. A file square to the house
+ *  seats every panel at the same gap; a spread says it is turned or tilted against the roof, a negative gap that a panel is under
+ *  it. It measures only; nothing is moved. */
+export interface RoofPlane { n: V3; outer: V3[] }
+export interface RoofGap { panels: number; measured: number; min: number; max: number; under: number }
+const inPlan = (x: number, z: number, ring: V3[]): boolean => {
+  let c = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, , zi] = ring[i]!, [xj, , zj] = ring[j]!;
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c;
+  }
+  return c;
+};
+export function roofGap(panels: V3[][], roofs: RoofPlane[]): RoofGap | null {
+  if (!panels.length) return null;
+  const sloped = roofs.filter((r) => Math.abs(r.n[1]) > 0.2 && r.outer.length >= 3);
+  const gaps: number[] = [];
+  for (const pts of panels) {
+    let low = Infinity;
+    for (const [x, y, z] of pts) {
+      let top = -Infinity;
+      for (const r of sloped) {
+        if (!inPlan(x, z, r.outer)) continue;
+        const o = r.outer[0]!, ry = o[1] - (r.n[0] * (x - o[0]) + r.n[2] * (z - o[2])) / r.n[1];
+        if (ry > top) top = ry;
+      }
+      if (top > -Infinity) low = Math.min(low, y - top);
+    }
+    if (low < Infinity) gaps.push(low);
+  }
+  if (!gaps.length) return { panels: panels.length, measured: 0, min: NaN, max: NaN, under: 0 };
+  return { panels: panels.length, measured: gaps.length, min: Math.min(...gaps), max: Math.max(...gaps), under: gaps.filter((g) => g < 0).length };
+}

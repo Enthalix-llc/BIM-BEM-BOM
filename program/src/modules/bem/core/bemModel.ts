@@ -482,7 +482,8 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
   // ELECTRICAL › GENERATION (2026-10-02): the PV panels of the projected files, when PV is ruled on
   // the ELECTRICAL sheet governs once drawn (2026-10-02): its load centers compiled, the panels it holds checked against the files'
   const gen = ledger?.systems?.generation;
-  const elecSheet = gen?.assembly?.nodes.length ? compileElectrical(gen.assembly, new Set(input.siteElements.filter((e) => isPvPanel(e.name)).map((e) => e.expressId))) : null;
+  const pvInRoom = new Map((input.mep?.elements ?? []).filter((e) => e.interior && isPvPanel(e.name)).map((e) => [e.expressId, e.room ?? "a room"] as const));
+  const elecSheet = gen?.assembly?.nodes.length ? compileElectrical(gen.assembly, new Set(input.siteElements.filter((e) => isPvPanel(e.name)).map((e) => e.expressId)), pvInRoom) : null;
   const pv = elecSheet ? resolvePvSheet(input.siteElements, elecSheet) : resolvePv(input.siteElements, gen?.pv as PvRulingIn | undefined);
   // THE METERS (user, 2026-10-23): each Meter card's zones — the writer sums their loads and the units serving them
   const meters = (elecSheet?.meters ?? []).map((m) => ({ name: m.name, zones: m.zones }));
@@ -541,7 +542,7 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
     { key: "solar_distribution", value: site.solarDistribution, source: src(r.solarDistribution) },
   ];
   // THE CHECKS (the user, 2026-10-06): the questions asked of every build, answered from what it resolved
-  const checks = modelChecks({ drawn, nodes: ledger?.systems?.assembly?.nodes ?? [], sys, gains, conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), plumbing: dhw, approvals: ledger?.sideApprovals,
+  const checks = modelChecks({ drawn, nodes: ledger?.systems?.assembly?.nodes ?? [], sys, gains, conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), plumbing: dhw, approvals: ledger?.sideApprovals, pv: elecSheet ? { refused: pv?.refused ?? [], arrays: elecSheet.arrayCards } : null,
     unresolved: [{ where: "ZONES", items: unresolvedZones }, { where: "CONSTRUCTIONS", items: cons.unresolved }, { where: "SCHEDULES", items: sched.unresolved },
       { where: "SYSTEMS", items: sys.unresolved.filter((x) => !x.startsWith("PLUMBING: ")) }, { where: "ZONES › gains", items: gains.unresolved }] });
   return { checks, model: { ...base, climateZone: countyZone?.zone || undefined, energyCode: codeId, zones, site, constructions: cons.map, ...(doorGlass.size ? { doorGlass } : {}), ...(vegetated.size ? { vegetated } : {}), ground: ledger?.ground, schedules: sched.map, holidays: projectHolidayDays(ledger).length ? projectHolidayDays(ledger) : undefined, systems: sys, systemSchedules, gains, shading: input.siteElements, pv, voidRulings, ...(tariff?.card.charges ? { tariff } : {}), ...(meters.length ? { meters } : {}) }, input, settings, unresolvedZones, unresolvedConstructions: cons.unresolved, unresolvedSchedules: sched.unresolved, unresolvedSystems: sys.unresolved, unresolvedGains: gains.unresolved };

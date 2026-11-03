@@ -1273,6 +1273,8 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .alignDialog button { font: 11px ui-monospace, monospace; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 1px 7px; cursor: pointer; }
 .alignDialog button.on { background: #2b6cb0; color: #fff; border-color: transparent; }
 .alignDialog button.lock { margin-left: auto; color: var(--muted); }
+.alignDialog .alignRoof { font-size: 12px; padding: 2px 0 4px; }
+.alignDialog .alignRoof.bad { color: var(--warn); }
 .alignDialog button.lock.on { background: #f0c060; color: #12161f; border-color: transparent; font-weight: 700; box-shadow: 0 0 6px #f0c06099; }
 .alignDialog button.accept { background: #2f7a4f; color: #fff; border-color: transparent; }
 .alignDialog button:disabled { opacity: 0.45; cursor: default; }

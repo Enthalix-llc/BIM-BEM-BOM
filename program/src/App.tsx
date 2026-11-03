@@ -76,7 +76,7 @@ import { ElectricalColumn } from "./modules/bem/view/ElectricalSheet.js";
 import { readElecCatalogue, compileElectrical, sheetFromFile, ELEC_SHELVES, ELEC_CLASS, zonesOn, withZones, zoneOnto, withTodaysLabels } from "./modules/bem/core/elecSheet.js";
 import { PlumbingColumn, type PlumbRoom } from "./modules/bem/view/PlumbingSheet.js";
 import { readPlumbCatalogue, compilePlumbing, sheetFromFile as plumbFromFile, isFileWaterHeater, PLUMB_SHELVES, PLUMB_CLASS } from "./modules/bem/core/plumbSheet.js";
-import { readPanels } from "./modules/bem/core/pvArrays.js";
+import { readPanels, isPvPanel } from "./modules/bem/core/pvArrays.js";
 import { startPaletteDrag } from "./modules/bem/view/assemblyDrag.js";
 import { compileAssembly, stageAssembly, sanitizeStage, diagramRows, diagramDiff, removeRoom, addRoom, addNode, addEdge, type Assembly, type ZoneAssign, refusedByNode } from "./modules/bem/core/assembly.js";
 import { readJournal, writeJournal, newestStaged, stagedEmpty, stagedContent, type Staged } from "./modules/bem/core/stageJournal.js";
@@ -140,7 +140,7 @@ import type { BillColumnMap } from "./modules/bom/core/csvRead.js";
 import type { BomLedger } from "./modules/bom/core/bomDb.js";
 import { ExplainLayer } from "./explain/ExplainLayer";
 import { AlignDialog, type AlignPick } from "./view/AlignDialog";
-import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, type AxisLocks, type FileAlign } from "./core/siteAlign";
+import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, alignPoint, unalignPoint, roofGap, type AxisLocks, type FileAlign } from "./core/siteAlign";
 
 // pane-2 default: the envelope + structure classes plane assignment will care
 // about. A VIEW filter only — the DB stores every streamed element
@@ -693,6 +693,19 @@ export function App(): React.ReactElement {
   const siteElementsRef = useRef<SiteElementRow[]>([]);
   /** THE SERVICES INVENTORY as idf.db holds it (2026-09-10): the projected shade files' elements, interior included, for the SYSTEMS view and column */
   const mepElementsRef = useRef<MepElementRow[]>([]);
+  /** THE ROOF GAP in the alignment dialog (user, 2026-11-03): the file's PV panels, stored under the accepted placement, taken back
+   *  and placed by the draft, measured against the house's roofs in idf.db — live as the file is nudged or turned */
+  const alignRoofGap = useMemo(() => {
+    if (!alignEdit) return null;
+    const applied = appliedAlign(alignEdit.file), draft = alignEdit.draft;
+    const panels = mepElementsRef.current.filter((e) => e.file === alignEdit.file && isPvPanel(e.name)).map((e) => {
+      const pts: Array<[number, number, number]> = [];
+      for (let i = 0; i + 2 < e.xyz.length; i += 3) pts.push(alignPoint(unalignPoint([e.xyz[i]!, e.xyz[i + 1]!, e.xyz[i + 2]!], applied), draft));
+      return pts;
+    });
+    return roofGap(panels, idfRowsRef.current.filter((r) => r.ifcClass === "roof").map((r) => ({ n: r.n, outer: r.outer })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alignEdit?.file, alignEdit?.draft]);
   const mepSystemsRef = useRef<MepSystemRow[]>([]);
   const [mepInfo, setMepInfo] = useState(0);
   /** THE SYSTEMS FOCUS (user, 2026-09-10): the subsection whose elements the view lights and whose options sit under the view; view state */
@@ -2132,7 +2145,9 @@ export function App(): React.ReactElement {
   // a saved sheet's old card words read as today's (2026-10-23: "Load centre", "Utility — net metering"), on both sides of the diff
   const elecAsm: Assembly = useMemo(() => withTodaysLabels(sysStage.generation?.assembly ?? { nodes: [], edges: [] }), [sysStage.generation?.assembly]);
   const pvPanels = useMemo(() => readPanels(bemModel?.input.siteElements ?? []).panels, [bemModel]);
-  const elecCompiled = useMemo(() => compileElectrical(elecAsm, new Set(pvPanels.map((q) => q.expressId))), [elecAsm, pvPanels]);
+  // a panel the projection left inside a room is named so on its card (2026-11-03), as the model build names it
+  const pvInRoom = useMemo(() => new Map((bemModel?.input.mep?.elements ?? []).filter((e) => e.interior && isPvPanel(e.name)).map((e) => [e.expressId, e.room ?? "a room"] as const)), [bemModel]);
+  const elecCompiled = useMemo(() => compileElectrical(elecAsm, new Set(pvPanels.map((q) => q.expressId)), pvInRoom), [elecAsm, pvPanels, pvInRoom]);
   const elecPending = diagramDiff({ assembly: elecAsm }, { assembly: withTodaysLabels(bemLedger?.systems?.generation?.assembly) }).pending;
   // ── SYSTEMS › PLUMBING, THE SHEET (user, 2026-10-02): staged as systems.dhw.assembly, the rooms the model's own (a room → its zone)
   const plumbCatalogue = useMemo(() => readPlumbCatalogue(catalogue ? schemaRef.current : null), [catalogue]);
@@ -2163,7 +2178,7 @@ export function App(): React.ReactElement {
     });
   }, [plumbAsm, bemLedger, plumbCompiled, plumbCatalogue]);
   const plumbPending = diagramDiff({ assembly: plumbAsm }, { assembly: bemLedger?.systems?.dhw?.assembly }).pending;
-  const fileHeaters = useMemo(() => (bemModel?.input.mep.elements ?? []).filter((e) => isFileWaterHeater(e.name)).map((e) => ({ name: e.name, room: e.room ?? null })), [bemModel]);
+  const fileHeaters = useMemo(() => (bemModel?.input.mep?.elements ?? []).filter((e) => isFileWaterHeater(e.name)).map((e) => ({ name: e.name, room: e.room ?? null })), [bemModel]);
   const asmNotWritten = useMemo(() => refusedByNode(asmCompiled, bemModel?.systems ?? []), [asmCompiled, bemModel]);   // the "not written" mark (2026-09-15): the SAVED model's refusals per card
   /** the room → the Zone holding it on the sheet (user, 2026-09-10): the tree reads a held room in its zone's colour; a right-click un-assigns it */
   const roomHeld = useMemo(() => { const m = new Map<string, { id: string; name: string }>(); for (const z of asmCompiled.zones) for (const r of z.rooms) m.set(r, { id: z.id, name: z.name }); return m; }, [asmCompiled]);
@@ -2380,6 +2395,10 @@ export function App(): React.ReactElement {
       how: `switch it on in the Zone card's thermostat (SYSTEMS › MECHANICAL), or approve running ${c.subject} without ${side}`, tab: "bem-systems" as TabId,
       approve: { label: `approve: ${c.subject} runs without ${side}`, onApprove: () => void approveSide(c.subject, side, true) },
     })) : [])),
+    // THE PV AS DRAWN (user, 2026-11-03): an array the ELECTRICAL sheet holds and the build cannot write — never a silent loss of the PV
+    // (a card refused only because the card feeding it is — "(see the arrays)" — is in RUN › checks, not repeated here)
+    ...(bemModel?.checks ?? []).filter((c) => c.rule === "pv-sheet" && c.verdict === "fail" && !/is refused \(see the /.test(c.text)).map((c) => ({
+      what: `the PV is not written: ${c.text}`, how: "fix the array on SYSTEMS › ELECTRICAL (untick the panels), or the file's placement in BIM › Open IFC › Edit Alignment", tab: "bem-systems" as TabId })),
   ];
   // the box clears itself once nothing stands in the way
   useEffect(() => { if (runBlocked && runBlocks.length === 0) { setRunBlocked(false); setStatus("nothing stands in the way of the run — Run EnergyPlus when ready"); } }, [runBlocked, runBlocks.length]);
@@ -4256,7 +4275,7 @@ export function App(): React.ReactElement {
           draft={alignEdit.draft} applied={appliedAlign(alignEdit.file)} onDraft={onAlignDraft}
           pick={alignEdit.pick} onPick={onAlignPick} locks={alignEdit.locks} onLocks={onAlignLocks} imperial={imperial} busy={busy} note={alignEdit.note}
           fileWord={siteFiles.find((f) => f.name === alignEdit.file)?.word ?? null}
-          onAccept={() => void acceptAlign()} onCancel={closeAlign} />
+          roofGap={alignRoofGap} onAccept={() => void acceptAlign()} onCancel={closeAlign} />
       )}
       {closeMenu && (
         <>

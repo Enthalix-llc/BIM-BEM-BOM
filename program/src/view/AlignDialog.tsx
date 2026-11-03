@@ -10,7 +10,7 @@
  * point becomes the pivot.
  */
 import { useState } from "react";
-import { NO_ALIGN, moveBy, turnBy, setPivot, type AxisLocks, type FileAlign } from "../core/siteAlign";
+import { NO_ALIGN, moveBy, turnBy, setPivot, type AxisLocks, type FileAlign, type RoofGap } from "../core/siteAlign";
 
 const FT = 3.28083989501312;
 const MOVE_STEPS_M = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5];
@@ -27,6 +27,8 @@ export function AlignDialog(p: {
   pick: AlignPick; onPick: (mode: AlignPick) => void;
   locks: AxisLocks; onLocks: (l: AxisLocks) => void;
   imperial: boolean; busy: boolean; note: string | null; fileWord: string | null;
+  /** the file's PV panels against the house's roof under the draft placement; null when the file has none */
+  roofGap?: RoofGap | null;
   onAccept: () => void; onCancel: () => void;
 }): React.ReactElement {
   const u = p.imperial ? FT : 1, lu = p.imperial ? "ft" : "m";
@@ -118,6 +120,21 @@ export function AlignDialog(p: {
           title="click a point on the file, then the house point it belongs on: the file moves there, and that point becomes the locked pivot">Match a point…</button>
         <button disabled={p.busy} onClick={() => p.onDraft(setPivot(d, 0, 0))} title="the house's own origin as the pivot (the file stays where it is)">origin</button>
       </div>
+      {/* THE ROOF GAP (user, 2026-11-03): the PV panels' lowest corners above the roof — the same gap on every panel means the file
+          sits square to the house; it measures, it never moves a panel */}
+      {p.roofGap && (() => {
+        const g = p.roofGap, spread = g.max - g.min, bad = g.under > 0 || g.measured < g.panels;
+        const len = (m: number): string => `${m >= 0 ? "+" : "−"}${fmt(Math.abs(m))}`;
+        return (
+          <>
+            <div className="alignSec">PV ON THE ROOF <span className="ctxDim">· {g.panels} panel{g.panels === 1 ? "" : "s"}</span></div>
+            <div className={`alignRoof${bad ? " bad" : ""}`} title={"each panel's lowest corner above the house's roof under it, with this placement (the roof planes in idf.db).\nThe same gap on every panel (spread near 0) means the file sits square to the house; a spread means it is turned or tilted against the roof; a negative gap puts a panel under the roof, and the model then leaves it out.\nIt measures only — no panel is moved."}>
+              {g.measured ? <>gap {len(g.min)} to {len(g.max)} {lu} · spread {fmt(spread)} {lu}{g.under ? ` · ${g.under} under the roof` : ""}</> : "no panel over a roof"}
+              {g.measured > 0 && g.measured < g.panels ? ` · ${g.panels - g.measured} over no roof` : ""}
+            </div>
+          </>
+        );
+      })()}
       {pickWord && <div className="alignPick">{pickWord} · <button onClick={() => p.onPick(null)}>cancel</button></div>}
       {p.note && <div className="ctxDim">{p.note}</div>}
       {p.fileWord && <div className="ctxDim alignWord" title={p.fileWord}>{p.fileWord}</div>}
