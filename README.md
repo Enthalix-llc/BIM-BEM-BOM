@@ -1,6 +1,6 @@
 # BIM-BEM-BOM
 
-**Where the model meets the meter.**
+**Where the model meets the meter.** Website: <https://enthalix.com>
 
 BIM-BEM-BOM is open-source building energy modelling software offered by
 **Enthalix LLC**. The program is BIM-BEM-BOM; Enthalix is the company. Its
@@ -9,7 +9,7 @@ energy model (EnergyPlus) out, and the building operations model, the
 building's measured operation compared back against the model.
 
 > **Status: public preview.** Runs on macOS, Windows and Linux, from the
-> installers on the [Releases](https://github.com/Enthalix-llc/enthalix/releases)
+> installers on the [Releases](https://github.com/Enthalix-llc/BIM-BEM-BOM/releases)
 > page or from source, with EnergyPlus 26.1. Developed on macOS; every change is
 > built and run on all three systems automatically. Results are simulation
 > estimates, not code-compliance documentation.
@@ -52,7 +52,7 @@ report what works and what doesn't, and help shape where it goes next.
 
 ## Get involved
 
-- **Feedback and bugs:** open an [issue](https://github.com/Enthalix-llc/enthalix/issues).
+- **Feedback and bugs:** open an [issue](https://github.com/Enthalix-llc/BIM-BEM-BOM/issues).
 - **Contributing code:** see [CONTRIBUTING.md](CONTRIBUTING.md). Commits are
   signed off under the Developer Certificate of Origin.
 

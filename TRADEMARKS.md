@@ -27,5 +27,5 @@ name or logo (Apache-2.0, section 6). This policy explains how you may use them.
 
 ## Asking for permission
 
-Open an issue on the [Enthalix repository](https://github.com/Enthalix-llc/enthalix/issues)
+Open an issue on the [BIM-BEM-BOM repository](https://github.com/Enthalix-llc/BIM-BEM-BOM/issues)
 or contact Enthalix LLC at info@enthalix.com.

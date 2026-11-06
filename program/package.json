@@ -8,7 +8,7 @@
     "name": "Enthalix LLC",
     "email": "342208247+Enthalix-dev@users.noreply.github.com"
   },
-  "homepage": "https://github.com/Enthalix-llc/enthalix",
+  "homepage": "https://github.com/Enthalix-llc/BIM-BEM-BOM",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

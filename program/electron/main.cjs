@@ -296,7 +296,7 @@ ipcMain.handle("bem:list-dir", async (_ev, dir, ext) => {
 // station files land under data/cache and are read
 // from there until the user asks for a fresh one. The main process fetches so
 // the renderer's origin never meets a CORS refusal.
-const UA = "BIM-BEM-BOM/0.1 (Electron desktop; +https://github.com/Enthalix-llc/enthalix)";   // the app and a contact, as OSMF and Wikimedia ask; never the user's e-mail
+const UA = "BIM-BEM-BOM/0.1 (Electron desktop; +https://github.com/Enthalix-llc/BIM-BEM-BOM)";   // the app and a contact, as OSMF and Wikimedia ask; never the user's e-mail
 ipcMain.handle("bem:fetch-cached", async (_ev, url, cacheName, maxAgeDays) => {
   const dir = path.join(DATA_DIR, "cache");
   fs.mkdirSync(dir, { recursive: true });

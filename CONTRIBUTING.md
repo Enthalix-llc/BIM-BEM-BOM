@@ -4,7 +4,7 @@ Thank you for your interest. Feedback, bug reports and code are all welcome.
 
 ## Feedback and bug reports
 
-Open an [issue](https://github.com/Enthalix-llc/enthalix/issues). For bug
+Open an [issue](https://github.com/Enthalix-llc/BIM-BEM-BOM/issues). For bug
 reports, please include:
 
 - what you did, what you expected, and what happened instead;
