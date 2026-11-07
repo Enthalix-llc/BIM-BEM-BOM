@@ -123,6 +123,24 @@ them while it runs.
 | [EnergyPlus Input Output Reference](https://bigladdersoftware.com/epx/docs/), the HTML edition by Big Ladder Software | © Big Ladder Software LLC, all rights reserved | Its index page is downloaded so that each EnergyPlus object can link to its page in the reference. Enthalix links to the pages and does not copy their content. |
 | [Google Maps](https://www.google.com/maps) | Google's terms, between Google and the user | Links only: a button opens Google Maps at the site in the user's own browser through Google's documented Maps URLs. Nothing of Google's is shown in the app. |
 
+## Data owned by others in the materials library
+
+Enthalix ships no material, standard or product data belonging to others. The
+materials library (`data/materials.db`) is built on the user's computer:
+
+- **ASHRAE Handbook of Fundamentals (2005) materials**, 270 rows, read from
+  `DataSets/ASHRAE_2005_HOF_Materials.idf` in the user's own EnergyPlus
+  installation. The file states that it contains content from the Handbook and
+  carries no permission statement. The numbers are ASHRAE's.
+- **openstudio-standards materials catalogue**, downloaded once (see the table
+  above). Most of its rows cite the California Energy Commission's Title
+  24-2013.
+
+The right to use these numbers in your work, and any standard, code or product
+value you type in yourself, is yours to obtain from the publisher. Enthalix
+grants no right to them. The app says this on the start-up page and on each
+affected row's tooltip.
+
 ## Sample data
 
 | File | Source | Licence |

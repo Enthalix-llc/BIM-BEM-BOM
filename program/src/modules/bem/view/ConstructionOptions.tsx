@@ -33,7 +33,7 @@ import type { TypeRow } from "../constructionTypes.js";
 import { withLayers, type ConstructionRuling, type LayerPick } from "../core/bemDb.js";
 import { resolveConstruction, stackR, windowNote, compositeFor, layerR, FILMS, type Library } from "../core/idfLib.js";
 import { FRAMING_DEFAULTS, effectiveLayer, ruledStack } from "../core/bemModel.js";
-import { KIND_LABELS, IP, keywordMatch, absStated, layerPickFor, resolveMaterialRef, nameGroup, SOURCE_CLASS_LABELS, resolveDataSets, dataSetKeyOf, dataSetGroups, inDataSet, type MaterialKind, type MaterialRow, type GlazingProduct, type MaterialSource, type SourceClass, type DataSetGroup, SECTION_KINDS } from "../core/materialsDb.js";
+import { KIND_LABELS, IP, keywordMatch, absStated, layerPickFor, resolveMaterialRef, nameGroup, SOURCE_CLASS_LABELS, resolveDataSets, dataSetKeyOf, dataSetGroups, inDataSet, DATASET_RIGHTS, type MaterialKind, type MaterialRow, type GlazingProduct, type MaterialSource, type SourceClass, type DataSetGroup, SECTION_KINDS } from "../core/materialsDb.js";
 import { ROLES_BY_SECTION, ROLE_LABELS, roleOfLayer, rolesOfRow, sectionOfKind, type LayerRole } from "../core/layerRoles.js";
 import { fmtArea, srcClass, NumInput } from "./bemUi.js";
 
@@ -208,6 +208,7 @@ export function ConstructionOptions(p: {
         `R ${fmtR(rOwn(m))} at ${fmtTh(m.cls === "Material" && m.thicknessM ? m.thicknessM : th)} · roughness ${m.roughness ?? "MediumRough (the engine's default)"}`,
         `${absStated(m).solar || absStated(m).thermal ? "" : "surface values are the engine's defaults — "}TE (thermal absorptance) ${m.thermalAbs ?? "0.9 (the engine's default)"} · SR ${(1 - (m.solarAbs ?? 0.7)).toFixed(2)} (solar absorptance ${m.solarAbs ?? "0.7, default"}) · visible absorptance ${m.visibleAbs ?? "0.7 (default)"}`,
         `source: ${m.sourceRef}`,
+        DATASET_RIGHTS[keyOf(m)] ? `rights: ${DATASET_RIGHTS[keyOf(m)]}` : "",
         m.notes ? `notes: ${m.notes}` : "",
         m.keywords?.length ? `keywords: ${m.keywords.join("; ")}` : "",
       ].filter(Boolean).join("\n");

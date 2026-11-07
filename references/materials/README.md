@@ -12,6 +12,12 @@ sources:
 - **Your own entries**, typed in the materials dialog, each with the source you
   name.
 
+None of these numbers ship with BIM-BEM-BOM. The ASHRAE Handbook materials are
+ASHRAE's, and most catalogue rows cite California's Title 24-2013. Using them
+in your work, or any standard or product value you type in, may require your
+own copy or license from the publisher (THIRD-PARTY-NOTICES.md, "Data owned by
+others in the materials library").
+
 ## `opus-keyword-map.csv`
 
 This file maps the words an IFC file uses for a material (for example "cast in

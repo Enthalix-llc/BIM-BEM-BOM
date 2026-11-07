@@ -100,6 +100,13 @@ export const DATASETS: { key: string; sourceId: string; kind: DataKind; set: str
   { key: "hand-fen", sourceId: "hand", kind: "fenestration", set: "your own windows and doors" },
   { key: "igsdb", sourceId: "igsdb", kind: "fenestration", set: "IGSDB (glazing)" },
 ];
+/** THE PUBLISHER'S RIGHTS (user, 2026-11-07): BIM-BEM-BOM ships none of these numbers — they are read from the user's own
+ *  EnergyPlus installation or downloaded to the user's computer — and the user is told the right to use them is theirs to obtain.
+ *  Shown on a row's tooltip; the splash page and THIRD-PARTY-NOTICES.md say the same. */
+export const DATASET_RIGHTS: Record<string, string> = {
+  hof2005: "these numbers are ASHRAE's (Handbook of Fundamentals 2005), read from the DataSets file in your own EnergyPlus installation; BIM-BEM-BOM does not ship them or license them. Using them in your work may require your own copy or license from ASHRAE.",
+  "cec-t24": "these numbers cite the California Energy Commission's Title 24-2013, through the openstudio-standards catalogue downloaded to your computer; BIM-BEM-BOM does not ship them or license them. Check the publisher's terms for your use.",
+};
 /** a row's dataset: its source, of the kind the table it sits in holds */
 export function dataSetKeyOf(sourceId: string, kind: DataKind): string {
   return DATASETS.find((d) => d.sourceId === sourceId && d.kind === kind)?.key ?? sourceId;

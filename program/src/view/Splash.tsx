@@ -65,6 +65,11 @@ export function Splash(): ReactNode {
             <li>Powered by EnergyPlus, installed separately under its own license; BIM-BEM-BOM is not affiliated with or endorsed by the US
               Department of Energy. Every other component and data source keeps its own terms — THIRD-PARTY-NOTICES.md. The Open-Meteo
               archive's free API is for non-commercial use only</li>
+            <li><b>Data owned by others:</b> BIM-BEM-BOM ships no material, standard or product data belonging to others. The materials
+              library is built on your computer — the ASHRAE Handbook of Fundamentals (2005) materials read from your own EnergyPlus
+              installation, the openstudio-standards catalogue (rows citing California Title 24-2013) downloaded once. Those numbers
+              belong to their publishers, and so does any standard, code or product value you type in: using them in your work may
+              require your own copy or license from the publisher. Enthalix grants no right to them</li>
           </ul>
         </section>
 
@@ -88,7 +93,8 @@ export function Splash(): ReactNode {
             <li>A weather file from EnergyPlus's weather repository (picked on the map in BEM › SITE), or one you obtained</li>
             <li>The energy code your project is under: its climate zone for your county and its values, read from the code's own text
               (free to read at codes.iccsafe.org) — until then, the DOE/PNNL prototype values for IECC 2006–2024 that ship with BIM-BEM-BOM</li>
-            <li>Materials: EnergyPlus's datasets, the openstudio-standards catalogue, and your own entries</li>
+            <li>Materials: EnergyPlus's datasets, the openstudio-standards catalogue, and your own entries — the right to use the
+              publishers' numbers is yours to obtain (see License, Data owned by others)</li>
             <li>Your utility's tariff, transcribed from its published schedule; your bills (typed or CSV) and a PV production export</li>
           </ul>
           <h3>Limitations</h3>
