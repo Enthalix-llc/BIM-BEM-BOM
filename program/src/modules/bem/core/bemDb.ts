@@ -653,7 +653,11 @@ export function writeRun(db: Database, run: BemRun, results: RunResults | null):
   }
   // each zone's peak by load component (2026-10-02): metric "<heating|cooling>:<component>", the peak's time in the origin
   // the outside face temperatures on the design days (2026-10-08): scope "surface_dd", the month field the hour ending (1–24)
-  for (const s of results.designSurfaceTemps ?? []) add("surface_dd", s.key, s.hour, `outside_temp_${s.day}_c`, s.c, "C", `variable:Surface Outside Face Temperature (${s.day} design day)`);
+  // and the inside faces' (2026-11-04), for a room's air model (BOM › CFD)
+  for (const s of results.designSurfaceTemps ?? []) {
+    const f = s.face ?? "outside";
+    add("surface_dd", s.key, s.hour, `${f}_temp_${s.day}_c`, s.c, "C", `variable:Surface ${f === "inside" ? "Inside" : "Outside"} Face Temperature (${s.day} design day)`);
+  }
   // the coils' rates on the design days (2026-10-11): scope "coil_dd", the month field the minute the timestep ends
   for (const c of results.coilDesign ?? []) add("coil_dd", c.coil, c.minute, `${c.kind}_${c.day}_w`, c.w, "W", `variable:${c.kind === "heating" ? "Heating Coil Heating Rate" : "Cooling Coil Total Cooling Rate"} (${c.day} design day)`);
   for (const c of results.zoneBalance ?? []) add("zone_balance", c.zone, 0, `${c.kind}:${c.component}`, c.w, "W", `variable:Zone Air Heat Balance (design day timestep) · ${c.time}`);
@@ -822,13 +826,13 @@ export function queryCoilRates(db: Database, stamp: string): { design: Array<{ c
   b.free();
   return { design, year };
 }
-export function queryDesignSurfaceTemps(db: Database, stamp: string): { summer: Map<string, number[]>; winter: Map<string, number[]> } {
+export function queryDesignSurfaceTemps(db: Database, stamp: string, face: "outside" | "inside" = "outside"): { summer: Map<string, number[]>; winter: Map<string, number[]> } {
   const out = { summer: new Map<string, number[]>(), winter: new Map<string, number[]>() };
   const st = db.prepare("SELECT key, month, metric, value FROM results WHERE stamp=? AND scope='surface_dd'");
   st.bind([stamp]);
   while (st.step()) {
     const r = st.get() as [string, number, string, number];
-    const m = r[2] === "outside_temp_summer_c" ? out.summer : r[2] === "outside_temp_winter_c" ? out.winter : null;
+    const m = r[2] === `${face}_temp_summer_c` ? out.summer : r[2] === `${face}_temp_winter_c` ? out.winter : null;
     if (!m || r[1] < 1 || r[1] > 24) continue;
     const a = m.get(r[0]) ?? m.set(r[0], new Array<number>(24).fill(NaN)).get(r[0])!;
     a[r[1] - 1] = r[3];

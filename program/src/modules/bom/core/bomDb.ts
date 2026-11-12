@@ -30,6 +30,10 @@ export interface BomLedger {
   statements?: StatementsLedger;
   /** THE CALIBRATION RUN (2026-10-09): the day the PV was connected, and the panels' measured production as imported (data/bom/imports/) */
   calibration?: { pvOn?: string; pv?: { sha256: string; name: string } };
+  /** A ROOM'S CFD SETUP (2026-11-10, moved from the window's storage): per room the terminals' names, roles, flows, sizes and places,
+   *  the terminals added, the doors, the setpoints, the supply air, the mesh and iterations — the user's design work, backed up with
+   *  the other rulings. What each RUN used is recorded in cfd.db beside its result. (The shape is cfd/core/cfdChoices' CfdChoices.) */
+  cfd?: { rooms: Record<string, unknown> };
 }
 
 const DDL = `

@@ -45,6 +45,10 @@ export interface DbPanes {
   setSun(dir: [number, number, number] | null): void;
   /** the sun-path overlay (sunView.ts) over the IDF-DB view */
   setSunGroup(group: THREE.Group | null): void;
+  /** the airflow overlay (cfdView.ts, BOM › CFD) over the IDF-DB view — its own slot, so it never takes the sun's */
+  setCfdGroup(group: THREE.Group | null): void;
+  /** the CFD arrows move at the air's speed, or hold still */
+  setCfdMoving(on: boolean): void;
   /** the hot outline that says WHICH wall a table row is talking about */
   setHighlights(db: THREE.Group | null, idf: THREE.Group | null): void;
   /** where to send drags and wheels: pane 1's camera element. One gesture in
@@ -91,6 +95,8 @@ export function createDbPanes(canvas: HTMLCanvasElement): DbPanes {
   let hi2: THREE.Group | null = null;
   let hi3: THREE.Group | null = null;
   let sunGroup: THREE.Group | null = null;
+  let cfdGroup: THREE.Group | null = null;
+  let cfdMoving = false;
   // the sun: one light, made when first asked for; shadow flags re-applied to
   // every mesh whenever a group changes while the sun is on (the predecessor's
   // lesson: a one-shot traversal misses meshes that arrive later)
@@ -277,6 +283,8 @@ export function createDbPanes(canvas: HTMLCanvasElement): DbPanes {
   // throws mid-draw, so a view that fails frame after frame leaks without end (view/ifcPane.ts says how it was measured)
   let inRow = 0;
   const loop = (): void => {
+    // the CFD arrows move while the switch says so (2026-11-10) — the group carries its own step
+    if (cfdGroup && cfdMoving && typeof cfdGroup.userData.animate === "function") { try { (cfdGroup.userData.animate as (s: number) => void)(performance.now() / 1000); } catch { /* a view, never the loop */ } }
     try { render(masterRef ?? undefined); inRow = 0; } catch (e) {
       renderErrors++; lastRenderError = e instanceof Error ? e.message : String(e);
       if (renderErrors === 1) console.warn("[db-panes] a frame threw; the loop goes on:", lastRenderError);
@@ -318,6 +326,16 @@ export function createDbPanes(canvas: HTMLCanvasElement): DbPanes {
       if (sunGroup) scene3.remove(sunGroup);
       sunGroup = group;
       if (group) scene3.add(group);
+    },
+    setCfdGroup(group) {
+      if (cfdGroup) scene3.remove(cfdGroup);
+      cfdGroup = group;
+      if (group) scene3.add(group);
+    },
+    setCfdMoving(on) {
+      cfdMoving = on;
+      // held still at the bins' own points when switched off
+      if (!on && cfdGroup && typeof cfdGroup.userData.animate === "function") (cfdGroup.userData.animate as (s: null) => void)(null);
     },
     setHighlights(db, idf) {
       if (hi2) scene2.remove(hi2);

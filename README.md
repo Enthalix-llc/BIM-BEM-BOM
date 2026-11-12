@@ -13,6 +13,12 @@ building's measured operation compared back against the model.
 > page or from source, with EnergyPlus 26.1. Developed on macOS; every change is
 > built and run on all three systems automatically. Results are simulation
 > estimates, not code-compliance documentation.
+>
+> **Room airflow (CFD) needs OpenFOAM, installed separately.** BIM-BEM-BOM does
+> not include OpenFOAM: it writes each room's case and runs the OpenFOAM you
+> install, on macOS (the OpenFOAM app) or Linux (openfoam.com's packages); CFD is
+> not available on Windows yet. Everything else runs without it. See
+> [SETUP.md § 6](SETUP.md#6-room-airflow-optional).
 
 ## See it in action
 
@@ -28,13 +34,19 @@ the BOM, then an actual house. <https://youtu.be/MwWHeHbkUAE> (10/30/26)
   zones and systems. It then runs EnergyPlus, which you install separately.
 - **BOM** prices the simulated year with your utility's tariff, takes your bills
   and PV production, and calibrates the model against ASHRAE Guideline 14.
+- **CFD** (on the BOM tab) shows how air moves through a room at its heating and
+  cooling design peaks: the room is the energy model's own enclosure, its walls
+  held at EnergyPlus's surface temperatures, and its supply, return and transfer
+  grilles placed from the MEP file or by hand. It runs OpenFOAM, which you
+  install separately.
 
 ## Getting started
 
 See [SETUP.md](SETUP.md). In short: install Node.js, pnpm and EnergyPlus 26.1,
 then run `pnpm install` and `pnpm dev` in `program/`, and open the sample
 building in [`samples/`](samples/). To see what is installed and what is
-missing, run `pnpm setup:check`.
+missing, run `pnpm setup:check`. For room airflow (CFD), also install OpenFOAM
+separately; it is optional, and SETUP.md § 6 says how.
 
 BIM-BEM-BOM ships no copyrighted standards tables, weather files or manufacturer
 data. You get each from its publisher, under its own terms; SETUP.md says where.
@@ -64,6 +76,11 @@ BIM-BEM-BOM is licensed under the [Apache License 2.0](LICENSE). See
 "Enthalix" and the Enthalix logo are trademarks of Enthalix LLC; see
 [TRADEMARKS.md](TRADEMARKS.md). BIM-BEM-BOM uses EnergyPlus but is not affiliated
 with or endorsed by the US Department of Energy.
+
+OPENFOAM® is a registered trade mark of OpenCFD Limited, producer and
+distributor of the OpenFOAM software. This offering is not approved or endorsed
+by OpenCFD Limited, producer and distributor of the OpenFOAM software and owner
+of the OPENFOAM® and OpenCFD® trade marks.
 
 ---
 

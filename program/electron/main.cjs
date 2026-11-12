@@ -9,6 +9,7 @@ const path = require("node:path");
 const engines = require("./engineLocate.cjs");   // the engine and the weather files, found one way for the app and the gate (2026-09-23)
 const projectStore = require("./projectStore.cjs");   // the ledgers by project and version, with their lineage (2026-09-30)
 const explainWindow = require("./explainWindow.cjs");   // the Explain help in a window of its own, for a second monitor (2026-10-15)
+const cfdRun = require("./cfdRun.cjs");   // OpenFOAM, found and run for BOM › CFD (2026-11-04)
 
 // <repo>/data — the module contract's output location. INSTALLED (2026-10-20, the installers for macOS, Windows and Linux): the app's
 // own folder is read-only (inside the .app, under Program Files, in an AppImage), so the user's files — data/ and Weather/ — live in
@@ -228,6 +229,8 @@ const { unzipSync } = require("fflate");
 const { spawn, spawnSync } = require("node:child_process");
 // a path under a folder, never beside it: "data-other/x" starts with "data" but is outside it, so the separator is part of the test
 const inside = (dir, r) => r === dir || r.startsWith(dir + path.sep);
+// BOM › CFD (2026-11-04): OpenFOAM found on this machine and run as its own program; the runs under data/cfd/runs
+cfdRun.register(ipcMain, { dataDir: DATA_DIR });
 const within = (p) => { const r = path.resolve(DATA_DIR, p); if (!inside(DATA_DIR, r)) throw new Error("outside data/"); return r; };
 ipcMain.handle("bem:read-data-file", async (_ev, rel) => {
   try { return fs.readFileSync(within(rel)); } catch { return null; }

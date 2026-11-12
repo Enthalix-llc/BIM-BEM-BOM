@@ -17,7 +17,7 @@
 
 export type AppModule = "bim" | "bem" | "bom";
 
-export type TabId = "bim-edit" | "bem-site" | "bem-constructions" | "bem-schedules" | "bem-zones" | "bem-systems" | "bem-run" | "bom-ops";
+export type TabId = "bim-edit" | "bem-site" | "bem-constructions" | "bem-schedules" | "bem-zones" | "bem-systems" | "bem-run" | "bom-ops" | "bom-cfd";
 
 export interface TabDef { id: TabId; label: string; title: string }
 
@@ -48,6 +48,7 @@ export const MODULES: ModuleDef[] = [
   ] },
   { id: "bom", label: "BOM", title: "the operations model — bom.db: schedules, tariff, bills, calibration", accentVar: "--accent-bom", file: "bom.db", tabs: [
     { id: "bom-ops", label: "OPERATIONS", title: "bills, tariff and PV, calibration" },
+    { id: "bom-cfd", label: "CFD", title: "the air in a room at its heating and cooling design peaks — OpenFOAM runs kept in cfd.db, drawn as arrows, slices and the room's assessment" },
   ] },
 ];
 

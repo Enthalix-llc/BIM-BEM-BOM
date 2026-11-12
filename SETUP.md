@@ -133,6 +133,35 @@ values that are missing.
   have the right to use, with "Run on my own weather file…" on the calibration
   card.
 
+## 6. Room airflow (optional)
+
+BOM › CFD runs OpenFOAM, a separate program you install. BIM-BEM-BOM writes
+each room's case and runs OpenFOAM's own commands on it; it does not include
+OpenFOAM.
+
+- **macOS (Apple silicon):** the OpenFOAM app,
+  `brew install gerlero/openfoam/openfoam`, or download it from
+  [github.com/gerlero/openfoam-app](https://github.com/gerlero/openfoam-app).
+- **Linux:** openfoam.com's packages
+  ([openfoam.com/download](https://www.openfoam.com/download/openfoam-installation-on-linux)).
+  BIM-BEM-BOM looks for their `openfoamNNNN` launcher in `/usr/bin` or
+  `/usr/local/bin`.
+- **Windows:** not available yet.
+
+BIM-BEM-BOM uses the first OpenFOAM install it finds that has the
+`buoyantSimpleFoam` solver; set `OPENFOAM` to a launcher's path to choose one.
+The CFD tab says which install it found, or why none could be used.
+
+A room needs its EnergyPlus run first (BEM › RUN), for its design peaks and
+surface temperatures. Then click the room in LEVELS · SPACES on the CFD tab, place
+its supply, return and transfer grilles (from the MEP file, or by hand with
+**+ floor**, **+ ceiling** or **+ wall**), and give each supply its flow.
+
+OPENFOAM® is a registered trade mark of OpenCFD Limited, producer and
+distributor of the OpenFOAM software. This offering is not approved or endorsed
+by OpenCFD Limited, producer and distributor of the OpenFOAM software and owner
+of the OPENFOAM® and OpenCFD® trade marks.
+
 ## Where your files are
 
 | What | Where |

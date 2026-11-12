@@ -120,7 +120,7 @@ export const COIL_FIELDS = new Set([
   "Coil Total Capacity at Rating Conditions", "Coil Sensible Capacity at Rating Conditions", "Coil Air Mass Flow Rate at Rating Conditions",
 ]);
 
-export interface DesignSurfaceTemp { key: string; day: "summer" | "winter"; hour: number; c: number }
+export interface DesignSurfaceTemp { key: string; day: "summer" | "winter"; hour: number; c: number; face?: "outside" | "inside" }
 export interface RunResults {
   facility: FacilityResults;
   facilityPeak: FacilityPeak;
@@ -458,10 +458,10 @@ export function readRunSql(db: Database, opts: { hpwhZones?: ReadonlyMap<string,
   // THE OUTSIDE FACE TEMPERATURES ON THE DESIGN DAYS (user, 2026-10-08): the writer asks for them on the design days only; the day's own
   // type says which (a SummerDesignDay is the cooling peaks' day, a WinterDesignDay the heating peaks')
   const designSurfaceTemps: DesignSurfaceTemp[] = [];
-  for (const r of rows(db, "SELECT d.KeyValue, t.DayType, t.Hour, r.Value FROM ReportData r JOIN ReportDataDictionary d ON d.ReportDataDictionaryIndex=r.ReportDataDictionaryIndex JOIN Time t ON t.TimeIndex=r.TimeIndex JOIN EnvironmentPeriods e ON e.EnvironmentPeriodIndex=t.EnvironmentPeriodIndex WHERE e.EnvironmentType=1 AND d.Name='Surface Outside Face Temperature'")) {
+  for (const r of rows(db, "SELECT d.KeyValue, t.DayType, t.Hour, r.Value, d.Name FROM ReportData r JOIN ReportDataDictionary d ON d.ReportDataDictionaryIndex=r.ReportDataDictionaryIndex JOIN Time t ON t.TimeIndex=r.TimeIndex JOIN EnvironmentPeriods e ON e.EnvironmentPeriodIndex=t.EnvironmentPeriodIndex WHERE e.EnvironmentType=1 AND d.Name IN ('Surface Outside Face Temperature', 'Surface Inside Face Temperature')")) {
     const dt = str(at(r, 1));
     const day = /Summer/i.test(dt) ? "summer" : /Winter/i.test(dt) ? "winter" : null;
-    if (day) designSurfaceTemps.push({ key: str(at(r, 0)).toUpperCase(), day, hour: num(at(r, 2)), c: num(at(r, 3)) });
+    if (day) designSurfaceTemps.push({ key: str(at(r, 0)).toUpperCase(), day, hour: num(at(r, 2)), c: num(at(r, 3)), face: /Inside/.test(str(at(r, 4))) ? "inside" : "outside" });
   }
   // THE COILS' RATES (2026-10-11): on the design days at each zone timestep (the minute the interval ends), and by the hour over the weather
   // year — read so the units of one structure can be summed at the instant they peak together

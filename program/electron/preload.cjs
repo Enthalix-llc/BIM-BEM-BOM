@@ -43,6 +43,23 @@ contextBridge.exposeInMainWorld("bem", {
     return () => ipcRenderer.removeListener("bem:progress", h);
   },
 });
+// BOM › CFD (2026-11-04): OpenFOAM found, a room's case run, the finished case read back from its run folder
+contextBridge.exposeInMainWorld("cfd", {
+  engine: (again) => ipcRenderer.invoke("cfd:engine", again),
+  machine: () => ipcRenderer.invoke("cfd:machine"),
+  run: (opts) => ipcRenderer.invoke("cfd:run", opts),
+  cancel: (stamp) => ipcRenderer.invoke("cfd:cancel", stamp),
+  read: (stamp, rel) => ipcRenderer.invoke("cfd:read", stamp, rel),
+  list: (stamp, rel) => ipcRenderer.invoke("cfd:list", stamp, rel),
+  exists: (stamp, rel) => ipcRenderer.invoke("cfd:exists", stamp, rel),
+  settle: (stamp, n) => ipcRenderer.invoke("cfd:settle", stamp, n),
+  settleNote: (stamp, json) => ipcRenderer.invoke("cfd:settle-note", stamp, json),
+  onProgress: (cb) => {
+    const h = (_ev, msg) => cb(msg);
+    ipcRenderer.on("cfd:progress", h);
+    return () => ipcRenderer.removeListener("cfd:progress", h);
+  },
+});
 // the BOM module: the bills the user picks, the raw imports, its ledger
 // every window hears a failed save (2026-09-23)
 contextBridge.exposeInMainWorld("appStatus", {

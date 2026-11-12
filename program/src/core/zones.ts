@@ -80,6 +80,9 @@ export const isVoidZone = (zone: string | null | undefined): boolean =>
   !!zone && (/^Attic\b/i.test(zone) || /^Interstitial floor\b/i.test(zone));
 /** the room a built void stands over, from its name — the disambiguating suffix dropped (a metre height
  *  on names made before 2026-09-19, an ordinal since) */
+/** the void INSIDE A FLOOR ASSEMBLY (closed above by a floor) — never a room's air, merged into its room or not: the ceiling
+ *  under it is where the room ends (the user, 2026-11-10: "Basement rooms should stop at ceiling of basement spaces") */
+export const isFloorCavity = (zone: string | null | undefined): boolean => !!zone && /^Interstitial floor\b/i.test(zone);
 export const roomOfVoidZone = (zone: string): string =>
   zone.replace(/^(Attic|Interstitial floor)\s+–\s+/i, "").replace(/ \((\d+\.\d+ m|\d+)\)$/, "");
 

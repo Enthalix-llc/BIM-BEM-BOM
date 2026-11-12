@@ -113,6 +113,23 @@ interface Window {
     validate(idf: string): Promise<{ ok: boolean; err: string }>;
     onProgress(cb: (msg: { stamp: string; text: string }) => void): () => void;
   };
+  /** BOM › CFD (2026-11-04): OpenFOAM found and run; a run's folder read back */
+  cfd: {
+    engine(again?: boolean): Promise<{ exe: string | null; version: string | null; why: string | null }>;
+    /** the machine's cores (performance / efficiency where the OS states them) and memory */
+    machine(): Promise<import("./modules/cfd/core/cfdParallel").Machine>;
+    /** np: the processes the run takes (1 = serial); runs go side by side while their processes fit */
+    run(opts: { stamp: string; files: Record<string, string>; steps: Array<{ label: string; cmd: string }>; np?: number }): Promise<{ ok: boolean; error: string | null; failedStep?: string; dir?: string; seconds: number; version?: string; np?: number }>;
+    cancel(stamp: string): Promise<boolean>;
+    read(stamp: string, rel: string): Promise<string | null>;
+    list(stamp: string, rel: string): Promise<string[]>;
+    exists(stamp: string, rel: string): Promise<boolean>;
+    /** the room has settled at iteration n: the average starts at n + 1 and the run ends at n + 3,000 (2026-11-10) */
+    settle(stamp: string, n: number): Promise<{ averageFrom: number; end: number } | null>;
+    /** the settling verdict, kept beside the case as settled.json */
+    settleNote(stamp: string, json: string): Promise<boolean>;
+    onProgress(cb: (msg: { stamp: string; step?: number; steps?: number; label?: string; text: string }) => void): () => void;
+  };
   /** the BOM module's bridge: the bills, the raw imports, its ledger */
   bom: {
     pickCsv(): Promise<{ name: string; path: string; text: string } | null>;

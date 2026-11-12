@@ -1281,3 +1281,139 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .alignDialog .alignPick { color: #f0c060; }
 .alignDialog .alignWord { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .alignDialog .alignEnd { margin-top: 4px; }
+
+/* BOM › CFD (2026-11-04): the marks on a space with runs, the frame's slices and bars, the column's assessment */
+.tree .cfdMark { margin-left: 4px; font-size: 9px; color: var(--accent-bom); letter-spacing: 0.5px; cursor: default; }
+.cfdFrame .cfdFrameBody { flex: 1; min-width: 0; overflow: auto; padding: 6px 10px; display: flex; flex-direction: column; gap: 6px; }
+.cfdFieldPick { display: flex; gap: 4px; }
+.cfdFieldPick button { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border, #3a4152); background: transparent; color: inherit; border-radius: 3px; cursor: pointer; }
+.cfdFieldPick button.on { background: var(--accent-bom); color: #111; border-color: var(--accent-bom); }
+.cfdSlice { display: flex; flex-direction: row; gap: 12px; flex: 1; min-height: 0; }
+.cfdSliceSide { display: flex; flex-direction: column; gap: 6px; width: 230px; flex: 0 0 230px; font-size: 11px; }
+.cfdSlice canvas { image-rendering: pixelated; height: 100%; width: auto; max-width: calc(100% - 242px); min-height: 0; object-fit: contain; }
+.cfdLegend { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.cfdRamp { flex: 1; min-width: 60px; height: 10px; border-radius: 2px; }
+.cfdRamp-T { background: linear-gradient(90deg, rgb(44,111,214), rgb(242,242,242), rgb(216,64,42)); }
+.cfdRamp-speed { background: linear-gradient(90deg, rgb(68,1,84), rgb(33,145,140), rgb(253,231,37)); }
+.cfdRamp-age { background: linear-gradient(90deg, rgb(252,253,191), rgb(183,55,121), rgb(0,0,4)); }
+.cfdBars { display: flex; flex-direction: column; gap: 3px; font-size: 11px; max-width: 760px; }
+.cfdBar { display: grid; grid-template-columns: 150px 1fr 230px; align-items: center; gap: 8px; }
+.cfdBarFill { height: 10px; background: var(--accent-bom); border-radius: 2px; min-width: 1px; }
+.cfdBar.over .cfdBarFill { background: #d8402a; }
+.cfdBar.out .cfdBarFill { background: #9aa3b5; }
+.cfdBarVal { font-variant-numeric: tabular-nums; }
+.cfdColumn { display: flex; flex-direction: column; gap: 8px; padding: 6px 8px; font-size: 12px; }
+.cfdColumn h4 { margin: 0; }
+.cfdMetrics { width: 100%; border-collapse: collapse; }
+.cfdMetrics th { text-align: left; font-size: 10px; letter-spacing: 0.6px; opacity: 0.75; padding: 4px 0 2px; }
+.cfdMetrics td { padding: 1px 0; }
+.cfdMetrics td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
+.cfdMetrics td.v-ok { color: #6cc070; }
+.cfdMetrics td.v-warn { color: #e0703a; }
+.cfdMetrics td.v-note { color: #d9b54a; }
+.cfdLimits { font-size: 11px; line-height: 1.4; }
+.viewLegend .legendBar.cfdT { background: linear-gradient(90deg, #2c6fd6, #f2f2f2, #d8402a); }
+.dialog.cfdDialog { width: min(1020px, 96vw); max-height: 90vh; overflow: auto; }
+.cfdDialog .cfdRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cfdDialog input.num { width: 64px; text-align: right; }
+.cfdDialog input.num.bad { color: var(--warn); border-color: var(--warn); }
+.cfdTerms { border-collapse: collapse; width: 100%; }
+.cfdTerms th { text-align: left; color: var(--muted); font-weight: normal; padding: 2px 4px; }
+.cfdTerms td { padding: 2px 4px; }
+.cfdTerms tr.off td { opacity: 0.5; }
+.cfdRefusals { color: var(--warn); }
+.cfdButtons { justify-content: flex-end; }
+.cfdGo:not(:disabled) { border-color: var(--accent-bom); color: var(--accent-bom); }
+.cfdRunBox { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.cfdRunBox .bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+.cfdRunBox .bar span { display: block; height: 100%; background: var(--accent-bom); }
+.cfdRunHead { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 2px 0; }
+.cfdBatchList { max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+.cfdBatchList .cfdRow.off { opacity: 0.6; }
+.cfdNotSettled { color: var(--warn); border: 1px solid var(--warn); border-radius: 3px; padding: 4px 6px; }
+/* the CFD arrows' motion switch, beside the peak tabs (2026-11-10) */
+.viewTabs .cfdMotion { display: inline-flex; margin-left: 10px; border-left: 1px solid var(--line); padding-left: 6px; }
+.viewTabs .cfdMotion button { font-size: 10px; }
+/* CFD · PROCESSORS — the frame at the top of the column, there whatever view is up (2026-11-10) */
+.cfdProcFrame { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin: 4px 0 8px; }
+.cfdPlans { border-collapse: collapse; margin: 4px 0; width: 100%; }
+.cfdPlans td { padding: 2px 6px; cursor: pointer; }
+.cfdPlans tr.on td { color: var(--sel); }
+.cfdPlans tr:hover td { background: rgba(255,255,255,0.04); }
+.cfdPlans td.num { text-align: right; white-space: nowrap; }
+.cfdSupply input.num { width: 56px; }
+.cfdSupplyTable td { padding: 2px 8px 2px 0; vertical-align: top; }
+.cfdSupplyTable td:first-child { white-space: nowrap; color: var(--muted); }
+/* Run CFD…: what blocks the run at the top, the notes folded (2026-11-10) */
+.cfdReady { color: var(--ok); margin: 4px 0; }
+.cfdNotes summary { cursor: pointer; margin: 4px 0; }
+.cfdRefusals { border: 1px solid var(--warn); border-radius: 4px; padding: 6px 8px; margin: 6px 0; }
+/* the CFD legend's scale: the label above, the ends and the room's average below, a tick at the average (2026-11-10) */
+.cfdScaleHead { text-align: center; font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; color: var(--dim); margin-top: 2px; }
+.cfdScale { position: relative; }
+.cfdScaleTick { position: absolute; top: -3px; width: 2px; height: 14px; background: #fff; box-shadow: 0 0 0 1px #000; transform: translateX(-1px); }
+.cfdScaleEnds { position: relative; display: flex; justify-content: space-between; font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; color: var(--dim); height: 14px; }
+.cfdScaleMean { position: absolute; top: 0; transform: translateX(-50%); color: var(--text); font-weight: 600; white-space: nowrap; background: rgba(12,14,20,0.85); padding: 0 3px; }
+/* a failed CFD run, explained (2026-11-10) */
+.cfdDiag { border-left: 3px solid var(--warn); padding: 4px 8px; margin: 4px 0; display: flex; flex-direction: column; gap: 3px; }
+.cfdDiag pre { font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; white-space: pre-wrap; margin: 2px 0; color: var(--muted); }
+.cfdCaution { color: var(--warn); border-left: 3px solid var(--warn); padding: 3px 8px; margin: 4px 0; }
+/* BOM › CFD · SETUP — the room's plan and a wall's elevation (2026-11-10) */
+.cfdSetupPlan { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.cfdPlanTools { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; flex-wrap: wrap; }
+.cfdPlanTools button { font-size: 11px; padding: 2px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.cfdPlanTools button.on { border-color: var(--sel); color: var(--sel); }
+.cfdPlanBody { flex: 1; display: flex; min-height: 0; }
+.cfdPlanBody > .cfdPlanSvg { flex: 2; }
+.cfdBalance { margin: 8px 0 4px; border-collapse: collapse; font-size: 12px; min-width: 260px; }
+.cfdBalance th, .cfdBalance td { padding: 2px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+.cfdBalance td.num, .cfdBalance th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.cfdBalance tr.sum td { font-weight: 600; border-top: 2px solid var(--line); }
+.cfdBalance tr.bad td { color: var(--warn); }
+.cfdOnModel.warn { color: var(--warn); }
+.cfd3d { flex: 1; position: relative; min-width: 0; overflow: hidden; }
+.cfd3d > canvas { display: block; }
+.cfd3dViews { position: absolute; right: 10px; top: 8px; display: flex; gap: 4px; }
+.cfd3dViews button { font-size: 11px; padding: 2px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.cfd3dNote { position: absolute; left: 10px; bottom: 8px; font-size: 12px; padding: 3px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; pointer-events: none; }
+.cfdPlanSvg { width: 100%; height: 100%; min-height: 0; }
+.cfdPlanSvg.tool-floor, .cfdPlanSvg.tool-ceiling, .cfdPlanSvg.tool-wall { cursor: crosshair; }
+.cfdElevation { flex: 1; display: flex; flex-direction: column; border-left: 1px solid var(--line); min-width: 260px; }
+.cfdElevation .cfdPlanSvg { cursor: crosshair; }
+.cfdFloor { fill: rgba(140, 150, 170, 0.18); stroke: rgba(160, 170, 190, 0.5); stroke-width: 0.01; }
+.cfdCeil { fill: none; stroke: rgba(160, 170, 190, 0.35); stroke-width: 0.01; stroke-dasharray: 0.06 0.05; }
+.cfdWall { stroke: #c8cdd8; stroke-width: 0.06; stroke-linecap: square; }
+.cfdWall.on { stroke: var(--sel); }
+.cfdDoor { stroke: #b08a5a; stroke-width: 0.09; }
+.cfdDoor.open { stroke-dasharray: 0.08 0.05; }
+.cfdNorth { stroke: #d8402a; stroke-width: 0.02; }
+.cfdPlanText { fill: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; pointer-events: none; }
+.cfdPlanText.muted { fill: var(--muted); }
+.cfdTerm rect { stroke: #10131a; stroke-width: 0.012; cursor: move; }
+.cfdTerm.ceiling rect { fill-opacity: 0.45; stroke-dasharray: 0.04 0.03; stroke: #f2f2f2; }
+.cfdTerm.wall rect { stroke-width: 0.02; }
+.cfdTerm.sel rect { stroke: var(--sel); stroke-width: 0.035; }
+.cfdTerm.bad rect { stroke: #e0443a; stroke-width: 0.04; }
+.cfdTerm.off { opacity: 0.35; }
+.cfdTerm.off rect { stroke-dasharray: 0.03 0.03; }
+.cfdPlanLegend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 10px; font-size: 11px; }
+.cfdPlanLegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.cfdPlanEmpty { padding: 20px; }
+.cfdTerms tr.sel td { background: rgba(255, 209, 102, 0.08); }
+.cfdName { width: 150px; }
+.cfdSmall { font-size: 10px; }
+.asmRailBtn.warn { color: var(--warn); }
+.cfdFrame input.num, .cfdFrame .cfdTerms input.num { width: 52px; display: inline-block; margin-right: 3px; }
+.cfdFrame .cfdTerms td { padding: 2px 6px 2px 0; white-space: nowrap; vertical-align: top; }
+.cfdFrame input.cfdName { width: 160px; }
+.cfdFrame select { max-width: 220px; }
+
+/* CFD · Space / Spaces, then Select (2026-11-11): the spaces picked marked in the left column */
+.tree .name.cfdPicked { outline: 1px solid var(--sel); outline-offset: 1px; border-radius: 2px; }
+.cfdPickBar { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.cfdPickBar .qaBtn.on { outline: 1px solid var(--sel); }
+.cfdBatchFrame { padding: 4px 8px; overflow: auto; }
+
+/* a terminal with something to settle before the run (2026-11-11): a red outline, the issue on hover */
+.cfdTerms tr.issue { outline: 1px solid var(--warn); outline-offset: -1px; }
+.cfdTerm.issue rect { stroke: var(--warn); stroke-width: 0.03; }

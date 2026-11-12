@@ -60,6 +60,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm build
+      - name: CFD check — the reader, the assessment and the plan against answers known by hand (no OpenFOAM)
+        run: pnpm cfd:check
 
       - name: Install EnergyPlus ${{ env.EP_VERSION }}
         run: |

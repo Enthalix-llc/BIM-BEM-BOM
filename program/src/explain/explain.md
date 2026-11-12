@@ -47,6 +47,16 @@ LEVELS · SPACES lists the building as the IFC file organises it: each level (If
 - The **swatch** is the colour the space is drawn in, the same in every view.
 - Attic voids under the roof are listed as their own rows. Every roof is insulated, so every void under one is inside the envelope.
 - On SYSTEMS and ZONES, dragging a room onto the sheet takes it **out of the Zone it was in**: a room belongs to one zone.
+- On BOM › CFD, a space with airflow runs in `cfd.db` is marked **●H** (heating) and **●C** (cooling): click a space to show its latest run; a space with no run opens its **setup**:
+  - the dialog lists the space's design peaks (the hour, the load and the thermostat from the last EnergyPlus run), the air terminals the MEP file places in the room, and the file's doors on the room's faces;
+  - a room with no MEP file, or terminals the MEP file leaves out, takes terminals placed by hand: **+ floor**, **+ ceiling** or **+ wall** on the plan, or a click on a face in 3-D, then its role, size and flow in the table;
+  - you give each terminal its role (supply, return, transfer, exhaust) and each supply its flow — nothing is assumed, and a supply with no flow is left out;
+  - its size, the face it sits on and its clearance to each wall can be typed: a negative clearance means the file has it past the wall, and typing a clearance moves it;
+  - each door is closed and sealed, closed with an undercut (its height typed), or open;
+  - what is missing is listed in red before anything runs. OpenFOAM then runs the case — serial, about 7 minutes per 1,000 iterations for a bedroom of about 110 m³; split across the processors, far less (below) — with its progress in the right column; the result joins the space's earlier runs.
+  - A run of fewer than 11,000 iterations averages its fields before the flow has settled (a measured 110 m³ bedroom needed about 8,000 iterations) and is marked **not converged**: a check of the set-up, not the room's answer.
+  - **THE PROCESSORS**: the dialog reads this machine (its cores — performance and efficiency where the OS says — and its memory) and suggests a split. One room is split across every core but two (left to the app), unless it is too small to split that far (10,000 cells a process at the least); both peaks run side by side on half each. The processes can be typed; **suggested** goes back. Measured on a 110 m³ bedroom on a 30-core Mac: 28 processes solve 10.6× faster than one, and give the same answer.
+- **Space · Spaces · Select** (the PROCESSORS frame in the right column): pick **Space** or **Spaces**, press **Select**, click the space (or, for Spaces, each space — a second click takes it out) in LEVELS · SPACES, and press **Select** again. One space opens its setup on its PROCESSORS tab; several are reviewed in the frame below the view — every space set up once (its terminals and doors are yours to say, so a room not set up is listed and left out), the peaks picked, and the plan — how many rooms at once, how many processes each, about how long. Four rooms side by side on 7 processes each did the most work on that 30-core Mac, 25 % more than one room after another on 28. Each run shows its own progress in the right column; **Cancel all** stops every one. A run waits when its processes do not fit beside those running; with more runs than processors the frame says serial processing is required.
 
 
 ## FILES · LAYERS
@@ -96,6 +106,21 @@ On BIM this is the right half of a split view, beside the IFC. Click the tab to 
 
 ## ENERGY & COST
 BOM's view: the run's months against the bills, priced by the tariff applied in UTILITY (the frame below).
+
+## CFD · HEATING
+The room's air at its **heating** design peak, as an OpenFOAM run left it (BOM › CFD keeps every run in `cfd.db`). The supply air is traced from each supply opening as streamlines, each carrying an equal share of its cfm, and drawn as arrows:
+
+- **length** is the air's speed there (0.5 m/s ≈ 0.45 m long);
+- **thickness** is the share of the supply air passing that point (an arrow's cross-section ∝ cfm, so a bundle of streams reads thick);
+- **colour** is the air's temperature, blue (coolest) to red (warmest) over the run;
+- the boxes are the openings: supplies yellow, outlets grey.
+
+Pick COOLING for the other peak; a peak with no run is greyed.
+
+OpenFOAM is a separate program you install; BIM-BEM-BOM writes each case and runs it. OPENFOAM® is a registered trade mark of OpenCFD Limited, producer and distributor of the OpenFOAM software. This offering is not approved or endorsed by OpenCFD Limited, producer and distributor of the OpenFOAM software and owner of the OPENFOAM® and OpenCFD® trade marks.
+
+## CFD · COOLING
+The room's air at its **cooling** design peak — drawn as for heating: length = speed, thickness = share of the supply air, colour = temperature.
 
 ## SITE · location
 The site on the map, at the position the IfcSite states or the one you located. Confirm the position here; the frame says which is in force.
@@ -248,6 +273,15 @@ The file is saved in `Weather/` and used for the calibration run. The archive tr
 
 ## BILLS
 The utility bills you entered or imported, month by month.
+
+## CFD ·
+The run's air in detail, each its own tab:
+
+- **SECTION** — a vertical cut across the room through the supply openings, drawing north at the left;
+- **PLAN 0.1 m / PLAN 1.1 m** — horizontal cuts at ankle and seated-head height, north up;
+- each cut by temperature, air speed or age of air (how long the air has been in the room — fresh supply air is young);
+- **SPEEDS** — the share of the occupied zone by air speed, the bars past 0.2 m/s in red;
+- **OPENINGS** — the air through each supply and outlet, and how much supply air reached each outlet along its streamlines.
 
 # Right column
 
@@ -523,3 +557,18 @@ The power cost adjustment, typed from a bill: it changes month to month, so the 
 
 ## BOM › net metering
 How the PV's exported energy is credited under the tariff's net-metering schedule.
+
+## BOM › THE ROOM
+The room's air at the design peak: its mean, the occupied zone's mean against the thermostat's setpoint, and the temperatures at ankle (0.1 m), seated head (1.1 m) and standing head (1.7 m). The occupied zone is 0.1–1.8 m above the floor and 0.3 m in from every wall, read from the room's own shape. **head − ankle** is read against ISO 7730:2005 category B (under 3 K).
+
+## BOM › THE AIR
+How the air moves in the occupied zone: speed (mean and the 95th percentile), the draught rating (ISO 7730:2005 eq. 6 — the share of people expected to feel a draught; category B under 20 %), and the **age of air** — how long, on average, the air at a point has been in the room. The **air-change effectiveness** is the room's nominal time constant (volume ÷ supply flow) over the occupied zone's mean age: 1 is fully mixed, above 1 the supply reaches the occupied zone before the room's air does (ASHRAE 129-1997).
+
+## BOM › COMFORT
+PMV and PPD (ISO 7730) from OpenFOAM's comfort function: a seated, awake person in 1 clo, 1 met, 50 % humidity. Indicative only — a sleeper's comfort is not this.
+
+## BOM › FLOWS
+The air through each opening, in cfm (or L/s), at that opening's own density; the **mass** balance out − in (under 1 % for a converged steady solve — the cfm out of a heated room is less than the cfm in, the warm supply being lighter); and the streamlines traced from the supply: how many reached an outlet within 40 m (room air turns over several times before it leaves).
+
+## BOM › THE SURFACES
+Each wall, window and door patch as the run held it: its temperature (the EnergyPlus inside surface temperature of the design hour) and the heat the air gave it or took from it, W.

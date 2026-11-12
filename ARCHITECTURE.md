@@ -11,6 +11,7 @@ Each module reads the file the one before it wrote:
 
 ```
 IFC file ──BIM──▶ ifc.db, idf.db ──BEM──▶ in.idf, bem.db ──BOM──▶ bom.db
+                                                  └──CFD──▶ cfd.db
 ```
 
 - **BIM** (`src/core/`, `src/modules/bim/`) reads the IFC file with
@@ -24,6 +25,13 @@ IFC file ──BIM──▶ ifc.db, idf.db ──BEM──▶ in.idf, bem.db ─
 - **BOM** (`src/modules/bom/`) prices the run with your utility's tariff, takes
   your bills and PV production, and runs the calibration year against ASHRAE
   Guideline 14's statistics. Its results go to `bom.db`.
+- **CFD** (`src/modules/cfd/`, the BOM › CFD tab) builds a room's closed
+  enclosure from its own `idf.db` surfaces, holds each face at the inside
+  surface temperature EnergyPlus reported for the design hour (`bem.db`), and
+  places the room's air terminals from the MEP file or by hand. It writes an
+  OpenFOAM case as text (`cfdCase.ts`), runs OpenFOAM as a separate program
+  (`electron/cfdRun.cjs`) in `data/cfd/runs/`, and reads the finished case back
+  into `cfd.db`: the room's comfort and air figures, slices and streamline arrows.
 
 Every derived file records the hash of what it was built from, so a stale
 result shows as stale. The databases are SQLite, used through

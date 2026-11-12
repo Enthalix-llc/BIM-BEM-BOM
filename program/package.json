@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "dist": "vite build && electron-builder --publish never",
-    "setup:check": "node scripts/setupCheck.mjs"
+    "setup:check": "node scripts/setupCheck.mjs",
+    "cfd:check": "tsx scripts/cfdCheck.ts"
   },
   "dependencies": {
     "fflate": "0.8.2",

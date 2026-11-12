@@ -296,6 +296,8 @@ function orient(nOut: V3, ring: V3[]): V3[] {
 /** web-ifc Y-up → EnergyPlus Z-up (the file's own project frame) */
 /** the variable the exterior surfaces' design-day temperatures are read from (2026-10-08) */
 export const SURFACE_TEMP_VARIABLE = "Surface Outside Face Temperature";
+/** and the INSIDE faces' (2026-11-04): a room's air model (BOM › CFD) holds its walls at these on the design hour */
+export const SURFACE_INSIDE_TEMP_VARIABLE = "Surface Inside Face Temperature";
 const toEp = (p: V3): V3 => [p[0], -p[2], p[1]];
 // a coordinate to 0.1 mm with its trailing zeros dropped — and a plain zero KEPT (2026-09-15: the strip took the lone "0" with it and a
 // flat shading element at the ground line went out with an empty z, which the engine refused; no building vertex had ever sat at 0)
@@ -672,6 +674,9 @@ export function writeIdf(
   const ddOnly = name("design days only");
   obj("Schedule:Compact", ddOnly, "", "Through: 12/31", "For: SummerDesignDay WinterDesignDay", "Until: 24:00", "1", "For: AllOtherDays", "Until: 24:00", "0");
   obj("Output:Variable", "*", SURFACE_TEMP_VARIABLE, "Hourly", ddOnly);
+  // the inside faces too (user, 2026-11-03: "we will need to pick up interior surface temperatures for roof, walls, door and windows") —
+  // a room's CFD case holds each wall, window and door at its inside face temperature of the design hour
+  obj("Output:Variable", "*", SURFACE_INSIDE_TEMP_VARIABLE, "Hourly", ddOnly);
   // THE STRUCTURE'S PEAK (user, 2026-10-11: "each structure to sum the loads for each zone at each structure's peak load … so we can make
   // sure the structure's actual equipment is sized correctly"): every coil's rate at each zone timestep on the design days (the sizing
   // basis) and by the hour over the weather year — the house's per-zone units summed at the instant they peak TOGETHER

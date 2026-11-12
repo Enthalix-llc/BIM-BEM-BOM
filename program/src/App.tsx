@@ -90,7 +90,7 @@ import { sunPosition, sunDirection, northDirection, northAxisFromTrueNorth, fmtH
 import { treeTransmittance } from "./core/shadingSchedule.js";
 import { parseEpwRadiation, irradiance, intensityColor, type EpwRadiation, type HourRad } from "./core/solar.js";
 import { repaintFill } from "./view/dbView.js";
-import { baseName } from "./modules/bem/view/bemUi.js";
+import { baseName, fmtTemp } from "./modules/bem/view/bemUi.js";
 import { siteTypes } from "./modules/bem/view/SiteTable.js";
 import { LocationFrame, LocationLocator, WeatherStationsMap, StationList, SiteFilesFrame, TurnMenu, stationsInView, zoneCode, type SiteFocus, type Located } from "./modules/bem/view/SiteViews.js";
 import type { MapBounds } from "./view/TileMap.js";
@@ -140,6 +140,22 @@ import type { BillColumnMap } from "./modules/bom/core/csvRead.js";
 import type { BomLedger } from "./modules/bom/core/bomDb.js";
 import { ExplainLayer } from "./explain/ExplainLayer";
 import { AlignDialog, type AlignPick } from "./view/AlignDialog";
+import { openCfdDb, queryRuns as queryCfdRuns, queryMetrics as queryCfdMetrics, queryOpenings as queryCfdOpenings, querySlices as queryCfdSlices, queryWalls as queryCfdWalls, queryArrows as queryCfdArrows, type RunRow as CfdRunRow } from "./modules/cfd/core/cfdDb";
+import { CfdFrame, CfdColumn, type CfdFrameTab, type CfdShown, type SliceField } from "./modules/cfd/view/CfdViews";
+import { buildCfdView, arrowScale } from "./view/cfdView";
+import { loadChoices as loadCfdChoices, saveChoices as saveCfdChoices, setChoicesStore } from "./modules/cfd/view/cfdChoicesStore";
+import { CfdBatchDialog } from "./modules/cfd/view/CfdBatchDialog";
+import { SupplyAirPanel } from "./modules/cfd/view/CfdSupply";
+import { CfdSetupFrame, CfdSetupPlan, useCfdSetup, type CfdSetupIn, type SetupTab } from "./modules/cfd/view/CfdSetup";
+import { cfdOffer, type CfdOffer as CfdOfferT } from "./modules/cfd/core/cfdPrep";
+import { MESH_STEPS as CFD_MESH_STEPS, stepsOnMesh, type RoomFace as CfdRoomFace } from "./modules/cfd/core/cfdCase";
+import type { CfdCase } from "./modules/cfd/core/cfdChoices";
+import { decomposeParDict, jobSeconds, machineLine, stepsFor, usableCores, type Machine as CfdMachine } from "./modules/cfd/core/cfdParallel";
+import { addTiming } from "./modules/cfd/view/CfdProcessors";
+import { diagnose, fileNamed, type Diagnosis as CfdDiagnosis } from "./modules/cfd/core/cfdDiagnose";
+import { MONITORS, readDat, settledYet, settleWords, STOP_DEFAULT, type MonitorKey, type Settle } from "./modules/cfd/core/cfdConverge";
+import { importCase as importCfdCase } from "./modules/cfd/pipeline";
+import type { Arrow as CfdArrow } from "./modules/cfd/core/streamArrows";
 import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, alignPoint, unalignPoint, roofGap, type AxisLocks, type FileAlign } from "./core/siteAlign";
 
 // pane-2 default: the envelope + structure classes plane assignment will care
@@ -610,6 +626,7 @@ export function App(): React.ReactElement {
   // The drawings this file came from are in FEET (the file states FOOT as its
   // length unit); the module stores metres. Display is the user's choice.
   const [imperial, setImperial] = useState(() => window.localStorage.getItem("bim-units") === "ft");
+  const imperialRef = useRef(imperial); imperialRef.current = imperial;
   useEffect(() => { window.localStorage.setItem("bim-units", imperial ? "ft" : "m"); }, [imperial]);
   // EXPLAIN (user, 2026-10-15): hover help on every section's header while on — the button beside the units toggle
   const [explain, setExplain] = useState(() => window.localStorage.getItem("bim-explain") === "1");
@@ -721,6 +738,38 @@ export function App(): React.ReactElement {
   const [bomView, setBomView] = useState<"cost" | "model">(() => { try { return window.localStorage.getItem("bim-bom-view") === "model" ? "model" : "cost"; } catch { return "cost"; } });
   useEffect(() => { try { window.localStorage.setItem("bim-bom-view", bomView); } catch { /* view state only */ } requestAnimationFrame(() => window.dispatchEvent(new Event("resize"))); }, [bomView]);
   const [bomRail, setBomRail] = useState<BomRail>("UTILITY");
+  // BOM › CFD (user, 2026-11-04): cfd.db's runs, the space and peak shown, the run picked among a space's runs, the frame's tab
+  const [cfdRuns, setCfdRuns] = useState<CfdRunRow[]>([]);
+  const [cfdSpace, setCfdSpace] = useState<string | null>(null);
+  const [cfdPeak, setCfdPeak] = useState<"heating" | "cooling">("heating");
+  /** the arrows MOVE at the air's own speed, or hold still (2026-11-10) — a view preference, remembered per window */
+  const [cfdMachine, setCfdMachine] = useState<CfdMachine | null>(null);
+  const [cfdMoving, setCfdMoving] = useState<boolean>(() => { try { return window.localStorage.getItem("bim-cfd-moving") === "1"; } catch { return false; } });
+  const [cfdPick, setCfdPick] = useState<number | null>(null);
+  const [cfdShown, setCfdShown] = useState<(CfdShown & { arrows: CfdArrow[] }) | null>(null);
+  const [cfdFrameTab, setCfdFrameTab] = useState<CfdFrameTab>("SECTION");
+  const [cfdField, setCfdField] = useState<SliceField>("T");
+  // SPACE OR SPACES (2026-11-11, the user): the PROCESSORS frame's two exclusive buttons, then Select — pick a space (or several)
+  // in the left column and press Select again; the processors are then reviewed in the frame below the view. View state.
+  const [cfdPickMode, setCfdPickMode] = useState<"space" | "spaces" | null>(null);
+  const [cfdSelecting, setCfdSelecting] = useState(false);
+  const [cfdPicks, setCfdPicks] = useState<string[]>([]);
+  /** the space last clicked: a setup still being read for another space when it arrives steps aside */
+  const cfdWantRef = useRef<string | null>(null);
+  const cfdDbRef = useRef<Database | null>(null);
+  // the Run CFD… dialog: what it reads (the room's solid, the run's IDF, idf.db and bem.db) opened when it opens
+  type CfdInputs = { idf: string; idfDb: Database; bemDb: Database; stamp: string; engine: { exe: string | null; version: string | null; why: string | null }; machine: CfdMachine | null };
+  /** A ROOM SET UP FOR CFD (2026-11-10): its plan in the view, its settings in the frame — in place of the Run CFD… dialog */
+  const [cfdSetupIn, setCfdSetupIn] = useState<(CfdSetupIn & { stamp: string }) | null>(null);
+  const [cfdView, setCfdView] = useState<"results" | "setup">("results");
+  const [cfdSetupTab, setCfdSetupTab] = useState<SetupTab>("TERMINALS");
+  const cfdSet = useCfdSetup(cfdSetupIn);
+  // Run CFD · several rooms: the same inputs, every room of the model
+  const [cfdBatch, setCfdBatch] = useState<(CfdInputs & { rooms: Array<{ space: string; faces: CfdRoomFace[] }> }) | null>(null);
+  // the runs going (several at once, 2026-11-04): each its own progress; a failed one stays until dismissed
+  const [cfdJobs, setCfdJobs] = useState<Array<{ stamp: string; space: string; peak: string; np: number; step: number; steps: number; label: string; iteration: number; iterations: number; last: string; error?: string; diag?: CfdDiagnosis | null }>>([]);
+  // the results go into cfd.db one at a time — two runs finishing together must not both read, add and save it
+  const cfdSaveChain = useRef<Promise<void>>(Promise.resolve());
   const [bomSel, setBomSel] = useState<BomCardSel | null>(null);
   const [bomTariff, setBomTariff] = useState<BomLedger["tariff"] | undefined>(undefined);
   const [runView, setRunView] = useState<"graphs" | "model" | "report">(() => { try { const v = window.localStorage.getItem("bim-run-view"); return v === "model" || v === "report" ? v : "graphs"; } catch { return "graphs"; } });
@@ -1299,8 +1348,238 @@ export function App(): React.ReactElement {
   if (module === "bem" && tab === "bem-schedules") { eff.clear(); eff.add("calendar"); }
   if (module === "bem" && tab === "bem-run") { eff.clear(); eff.add(runView === "graphs" ? "graphs" : runView === "report" ? "report" : "idf"); }
   // BOM: the main view is ENERGY & COST alone — the model's two views served no purpose there (user, 2026-10-15)
-  if (module === "bom") { eff.clear(); eff.add("cost"); }
+  // BOM › CFD: the model, the supply air drawn in it as arrows (user, 2026-11-04)
+  const cfdTab = module === "bom" && tab === "bom-cfd";
+  const bomOps = module === "bom" && !cfdTab;
+  if (module === "bom") { eff.clear(); eff.add(cfdTab ? "idf" : "cost"); }
   const costView = eff.has("cost");
+  // cfd.db read on entering the tab (and after a run) — the screen draws the snapshot it holds, never the solver's files
+  const loadCfd = useCallback(async (): Promise<void> => {
+    const bytes = await window.bem.readDataFile("cfd.db").catch(() => null);
+    const SQL = await getSql(wasmUrl);
+    cfdDbRef.current?.close();
+    cfdDbRef.current = bytes ? openCfdDb(SQL, bytes) : null;
+    const runs = cfdDbRef.current ? queryCfdRuns(cfdDbRef.current) : [];
+    setCfdRuns(runs);
+    setCfdSpace((sp) => (sp && runs.some((r) => r.space === sp) ? sp : runs[runs.length - 1]?.space ?? sp));
+  }, []);
+  useEffect(() => { if (cfdTab) void loadCfd(); }, [cfdTab, loadCfd]);
+  /** Run CFD… on a space: the dialog opens on the files it reads — the room solid (idf.db, as loaded), the latest run's own IDF
+   *  and bem.db (its peaks and inside temperatures), idf.db's terminals and doors */
+  const cfdFacesOf = useCallback((space: string): CfdRoomFace[] => {
+    const sp = runRef.current?.spaces.find((x) => spaceName(x) === space);
+    return (sp?.faces ?? []).map((f) => ({ n: f.n as [number, number, number], outer: f.outer as Array<[number, number, number]>, areaM2: f.areaM2, holes: ((f as { holes?: unknown }).holes ?? []) as Array<Array<[number, number, number]>> }));
+  }, []);
+  const cfdInputs = useCallback(async (): Promise<CfdInputs | null> => {
+    const stamp = bemRef.current?.stamp;
+    if (!stamp) { setStatus(`CFD: no EnergyPlus run yet — run the model on BEM › RUN first`); return null; }
+    const [idfB, bemB, idfTextB, engine, machine] = await Promise.all([window.bem.readDataFile("idf.db"), window.bem.readDataFile("bem.db"), window.bem.readRunFile(stamp, "in.idf"), window.cfd.engine(), window.cfd.machine().catch(() => null)]);
+    if (!idfB || !bemB || !idfTextB) { setStatus(`CFD: ${!idfB ? "idf.db" : !bemB ? "bem.db" : `the run ${stamp}'s in.idf`} could not be read`); return null; }
+    const SQL = await getSql(wasmUrl);
+    return { idf: new TextDecoder().decode(idfTextB), idfDb: new SQL.Database(idfB), bemDb: new SQL.Database(bemB), stamp, engine, machine };
+  }, []);
+  const openCfdDialog = useCallback(async (space: string): Promise<void> => {
+    // the setup opens on the plan (2026-11-10): the room's offer read once, the databases closed after
+    const inp = await cfdInputs();
+    if (!inp) return;
+    if (cfdWantRef.current && cfdWantRef.current !== space) { inp.idfDb.close(); inp.bemDb.close(); return; }
+    try {
+      const faces = cfdFacesOf(space);
+      const offer = cfdOffer({ space, faces, idf: inp.idf, idfDb: inp.idfDb, bemDb: inp.bemDb, stamp: inp.stamp });
+      setCfdSetupIn({ space, faces: offer.faces, idf: inp.idf, offer, engine: inp.engine, machine: inp.machine, stamp: inp.stamp });
+      setCfdView("setup"); setCfdSpace(space);
+    } catch (e) { setStatus(`CFD: could not set up ${space}: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { inp.idfDb.close(); inp.bemDb.close(); }
+  }, [cfdInputs, cfdFacesOf]);
+  const openCfdBatch = useCallback(async (only?: string[]): Promise<void> => {
+    const inp = await cfdInputs();
+    if (!inp) return;
+    const rooms = (runRef.current?.spaces ?? []).map((x) => spaceName(x)).filter((n, i, a) => n && a.indexOf(n) === i && (!only || only.includes(n))).map((space) => ({ space, faces: cfdFacesOf(space) })).filter((r) => r.faces.length);
+    setCfdBatch((d) => { d?.idfDb.close(); d?.bemDb.close(); return null; });
+    setCfdBatch({ ...inp, rooms });
+  }, [cfdInputs, cfdFacesOf]);
+  // SUPPLY AIR (2026-11-10): the room's offer read when that tab is up — the system's supply per peak, the loads, the setpoints
+  const [cfdSupplyOffer, setCfdSupplyOffer] = useState<{ space: string; stamp: string; offer: CfdOfferT | null; why: string | null } | null>(null);
+  const [cfdSupplyRev, setCfdSupplyRev] = useState(0);
+  useEffect(() => {
+    if (!cfdTab || cfdFrameTab !== "SUPPLY AIR" || !cfdSpace) return;
+    const stamp = bemRef.current?.stamp ?? "";
+    if (cfdSupplyOffer && cfdSupplyOffer.space === cfdSpace && cfdSupplyOffer.stamp === stamp) return;
+    let live = true;
+    setCfdSupplyOffer({ space: cfdSpace, stamp, offer: null, why: null });
+    void (async () => {
+      const inp = await cfdInputs();
+      if (!inp) { if (live) setCfdSupplyOffer({ space: cfdSpace, stamp, offer: null, why: "no EnergyPlus run yet — run the model on BEM › RUN" }); return; }
+      try {
+        const offer = cfdOffer({ space: cfdSpace, faces: cfdFacesOf(cfdSpace), idf: inp.idf, idfDb: inp.idfDb, bemDb: inp.bemDb, stamp: inp.stamp });
+        if (live) setCfdSupplyOffer({ space: cfdSpace, stamp, offer, why: null });
+      } catch (e) { if (live) setCfdSupplyOffer({ space: cfdSpace, stamp, offer: null, why: `could not read ${cfdSpace}'s system: ${e instanceof Error ? e.message : String(e)}` }); }
+      finally { inp.idfDb.close(); inp.bemDb.close(); }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfdTab, cfdFrameTab, cfdSpace, bem?.stamp]);
+  const closeCfdBatch = useCallback((): void => { setCfdBatch((d) => { d?.idfDb.close(); d?.bemDb.close(); return null; }); }, []);
+  /** the runs, all handed to the runner at once (it holds each until its processes fit): OpenFOAM in data/cfd/runs/<stamp>/, each
+   *  run's progress in the column, each result into cfd.db as it finishes — one save at a time */
+  const runCfdJobs = useCallback(async (bemStamp: string, jobs: Array<{ space: string; case: CfdCase; np: number }>): Promise<void> => {
+    const base = new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15);
+    // THE MESH ONCE PER ROOM, THE PEAKS ON IT (2026-11-10): a mesh run folder per room, each peak's run copying it in
+    const tag = (sp: string): string => sp.replace(/[^A-Za-z0-9]+/g, "_");
+    const meshes = [...new Map(jobs.map((j) => [j.space, j])).values()].map((j) => ({ space: j.space, stamp: `${base}-${tag(j.space)}-mesh`, files: j.case.out.files, steps: CFD_MESH_STEPS }));
+    const items = jobs.map((j) => ({ ...j, stamp: `${base}-${tag(j.space)}-${j.case.peak}`, steps: stepsFor(stepsOnMesh(`${base}-${tag(j.space)}-mesh`), j.np) }));
+    setCfdJobs((x) => [...x,
+      ...meshes.map((mj) => ({ stamp: mj.stamp, space: mj.space, peak: "mesh", np: 1, step: 0, steps: mj.steps.length, label: "waiting", iteration: 0, iterations: 0, last: "" })),
+      ...items.map((j) => ({ stamp: j.stamp, space: j.space, peak: j.case.peak, np: j.np, step: 0, steps: j.steps.length, label: "waiting for the mesh", iteration: 0, iterations: (j.case.out.info.iterations as number) ?? 0, last: "" }))]);
+    const mark = (stamp: string, f: (r: (typeof cfdJobs)[number]) => (typeof cfdJobs)[number]): void => setCfdJobs((x) => x.map((r) => (r.stamp === stamp ? f(r) : r)));
+    // STOP WHEN SETTLED (2026-11-10): every 250 iterations the room's three averages are read and judged (cfdConverge.ts); settled,
+    // the solver is asked to write and end. The last verdict per run is kept for its settled.json.
+    const settle = new Map<string, { checked: number; stopped: boolean; last: Settle | null; busy: boolean; end?: number }>();
+    const readSeries = async (stamp: string): Promise<Partial<Record<MonitorKey, Array<[number, number]>>>> => {
+      const out: Partial<Record<MonitorKey, Array<[number, number]>>> = {};
+      for (const mo of MONITORS) {
+        const starts = await window.cfd.list(stamp, `postProcessing/${mo.key}`);
+        const st = starts.sort((a, b) => +a - +b)[0];
+        const txt = st ? await window.cfd.read(stamp, `postProcessing/${mo.key}/${st}/${mo.file}`) : null;
+        if (txt) out[mo.key] = readDat(txt);
+      }
+      return out;
+    };
+    const ruleOf = (j: (typeof items)[number]) => (j.case.input.stop ? { ...STOP_DEFAULT, tolK: j.case.input.stop.tolK, minIterations: j.case.input.stop.minIterations } : null);
+    const off = window.cfd.onProgress((m) => {
+      if (!items.some((j) => j.stamp === m.stamp) && !meshes.some((mj) => mj.stamp === m.stamp)) return;
+      const it = /^Time = (\d+)/.exec(m.text);
+      const job = items.find((j) => j.stamp === m.stamp), rule = job ? ruleOf(job) : null;
+      if (it && rule) {
+        const st = settle.get(m.stamp) ?? { checked: 0, stopped: false, last: null, busy: false };
+        settle.set(m.stamp, st);
+        if (!st.stopped && !st.busy && +it[1]! >= st.checked + 250 && +it[1]! >= rule.minIterations) {
+          st.busy = true; st.checked = +it[1]!;
+          void readSeries(m.stamp).then((series) => {
+            const v = settledYet(series, rule); st.last = v;
+            if (v.settled && !st.stopped) {
+              st.stopped = true;
+              void window.cfd.settle(m.stamp, v.iteration).then((r) => { if (r) st.end = r.end; if (r) mark(m.stamp, (x) => ({ ...x, iterations: r.end, last: `settled at iteration ${v.iteration.toLocaleString()} — averaging the next ${(r.end - r.averageFrom + 1).toLocaleString()}` })); });
+            }
+          }).finally(() => { st.busy = false; });
+        }
+      }
+      mark(m.stamp, (r) => ({ ...r, step: m.step ?? r.step, label: m.label ?? r.label, iteration: it ? +it[1]! : r.iteration, last: m.text.slice(0, 160) }));
+    });
+    // WHY, AND WHAT TO DO (2026-11-10): the failed step's own log read and explained
+    const explain = async (stamp: string, res: { error: string | null; failedStep?: string }): Promise<void> => {
+      mark(stamp, (r) => ({ ...r, error: res.error ?? "the run failed" }));
+      if (res.error === "cancelled") return;
+      try {
+        const k = /log\.(\d\d)\./.exec(res.error ?? "")?.[1];
+        const names = await window.cfd.list(stamp, ".");
+        const log = names.find((n) => (k ? n.startsWith(`log.${k}.`) : n.startsWith("log."))) ?? [...names].filter((n) => n.startsWith("log.")).sort().pop();
+        const text = log ? (await window.cfd.read(stamp, log)) ?? "" : "";
+        const named = fileNamed(text), files: Record<string, string> = {};
+        if (named) files[named.file] = (await window.cfd.read(stamp, named.file)) ?? "";
+        mark(stamp, (r) => ({ ...r, diag: diagnose(text, res.failedStep ?? null, files) }));
+      } catch { /* the raw error stays */ }
+    };
+    const runPeak = async (j: (typeof items)[number]): Promise<void> => {
+      const files = j.np > 1 ? { ...j.case.out.files, "system/decomposeParDict": decomposeParDict(j.np) } : j.case.out.files;
+      const res = await window.cfd.run({ stamp: j.stamp, files, steps: j.steps, np: j.np });
+      if (!res.ok) {
+        await explain(j.stamp, res);
+        return;
+      }
+      // the verdict beside the case, read back with it (caseLoad's settle)
+      const rule = ruleOf(j);
+      if (rule) {
+        try {
+          const v = settledYet(await readSeries(j.stamp), rule), done = settle.get(j.stamp);
+          const settled = !!done?.stopped || v.settled;
+          const cap = Number(j.case.out.info.iterations ?? 0) || 0;
+          await window.cfd.settleNote(j.stamp, JSON.stringify({ settled, iteration: done?.stopped && done.last ? done.last.iteration : v.iteration, cap, words: settleWords(done?.stopped && done.last ? done.last : v, imperialRef.current) }));
+        } catch { /* the run stands; its verdict is read as not kept */ }
+      }
+      mark(j.stamp, (r) => ({ ...r, label: "reading the result into cfd.db", last: "" }));
+      let meshCells = 0;
+      const save = cfdSaveChain.current.then(async () => {
+        const SQL = await getSql(wasmUrl);
+        const bytes = await window.bem.readDataFile("cfd.db").catch(() => null);
+        const db = openCfdDb(SQL, bytes);
+        const imp = await importCfdCase(db, { read: async (rel) => (await window.cfd.read(j.stamp, rel)) ?? "", list: (rel) => window.cfd.list(j.stamp, rel), exists: (rel) => window.cfd.exists(j.stamp, rel) },
+          { space: j.space, peak: j.case.peak, stamp: new Date().toISOString(), caseDir: res.dir ?? j.stamp, seconds: res.seconds, solver: `OpenFOAM ${res.version ?? ""}${j.np > 1 ? ` · ${j.np} processes` : ""}`.trim(), bemRun: bemStamp });
+        meshCells = imp.cells;
+        await window.bim.saveDb("cfd.db", db.export());
+        db.close();
+      });
+      cfdSaveChain.current = save.catch(() => undefined);
+      try { await save; } catch (e) { mark(j.stamp, (r) => ({ ...r, error: `the run finished but could not be read: ${e instanceof Error ? e.message : String(e)}` })); return; }
+      // this machine's own time against the Bed 1 estimate for the same run (2026-11-10): the next estimates are corrected by it
+      if (typeof res.seconds === "number" && res.seconds > 0) {
+        // the iterations RUN — a run that settled early ended at its settling point + 3,000, not the cap
+        const cells = meshCells, iters = settle.get(j.stamp)?.end ?? (Number(j.case.out.info.iterations ?? 0) || 0);
+        const machine = await window.cfd.machine().catch(() => null);
+        const side = machine ? Math.max(1, Math.min(items.length, Math.floor(usableCores(machine) / Math.max(1, j.np)))) : 1;
+        const est = cells && iters ? jobSeconds({ key: j.stamp, cells, iterations: iters }, j.np, side) : 0;
+        if (est > 0) addTiming({ at: new Date().toISOString(), ratio: res.seconds / est, procs: j.np, cells });
+      }
+      setCfdJobs((x) => x.filter((r) => r.stamp !== j.stamp));
+      await loadCfd();
+      setCfdSpace(j.space); setCfdPeak(j.case.peak); setCfdPick(null); setCfdView("results");
+    };
+    await Promise.all(meshes.map(async (mj) => {
+      const peaks = items.filter((j) => j.space === mj.space);
+      const mres = await window.cfd.run({ stamp: mj.stamp, files: mj.files, steps: mj.steps, np: 1 });
+      if (!mres.ok) {
+        await explain(mj.stamp, mres);
+        for (const j of peaks) mark(j.stamp, (r) => ({ ...r, error: mres.error === "cancelled" ? "cancelled with its mesh" : `not run: ${mj.space}'s mesh failed — see the mesh above` }));
+        return;
+      }
+      setCfdJobs((x) => x.filter((r) => r.stamp !== mj.stamp));
+      for (const j of peaks) mark(j.stamp, (r) => ({ ...r, label: "waiting" }));
+      await Promise.all(peaks.map(runPeak));
+    }));
+    off();
+  }, [loadCfd]);
+  // a space picked in LEVELS · SPACES on this tab is the one shown
+  // (2026-11-10, the user: "switching spaces in left column did not refocus to that space in the 3d view" — it moved only for a
+  //  space with a run; now any space picked is the one the tab is about, and the view goes to it)
+  useEffect(() => { if (cfdTab && selSpaceName) { setCfdSpace(selSpaceName); setCfdPick(null); } }, [cfdTab, selSpaceName]);
+  // the view goes to the room shown, once per room (a right-click zooms already; this is the tab's first look) — zoomToSpace is
+  // declared further down, read here only when the effect runs, after the render that declared it
+  const cfdZoomed = useRef<string | null>(null);
+  useEffect(() => { if (!cfdTab) { cfdZoomed.current = null; return; } if (cfdSpace && cfdZoomed.current !== cfdSpace) { cfdZoomed.current = cfdSpace; const sp = cfdSpace; window.setTimeout(() => zoomToSpace(sp), 400); } }, [cfdTab, cfdSpace, cfdShown]);
+  useEffect(() => {
+    const db = cfdDbRef.current;
+    const mine = cfdRuns.filter((r) => r.space === cfdSpace && r.peak === cfdPeak);
+    const run = mine.find((r) => r.id === cfdPick) ?? mine[mine.length - 1];
+    if (!db || !run) { setCfdShown(null); return; }
+    setCfdShown({ run, metrics: queryCfdMetrics(db, run.id), openings: queryCfdOpenings(db, run.id), slices: queryCfdSlices(db, run.id), walls: queryCfdWalls(db, run.id), arrows: queryCfdArrows(db, run.id) });
+  }, [cfdRuns, cfdSpace, cfdPeak, cfdPick]);
+  // the arrows over the IDF-DB view while the tab is up; gone on every other tab
+  useEffect(() => {
+    const panes = dbPanesRef.current;
+    if (!panes) return;
+    if (!cfdTab || !cfdShown) { panes.setCfdGroup(null); return; }
+    panes.setCfdGroup(buildCfdView({ arrows: cfdShown.arrows, openings: cfdShown.openings, tRange: cfdTRange(cfdShown.arrows) }));
+    return () => panes.setCfdGroup(null);
+  }, [cfdTab, cfdShown]);
+  useEffect(() => { if (cfdTab && !cfdMachine) void window.cfd.machine().then(setCfdMachine).catch(() => undefined); }, [cfdTab, cfdMachine]);
+  useEffect(() => {
+    dbPanesRef.current?.setCfdMoving(cfdTab && cfdMoving);
+    try { window.localStorage.setItem("bim-cfd-moving", cfdMoving ? "1" : "0"); } catch { /* a convenience */ }
+  }, [cfdTab, cfdMoving, cfdShown]);
+  /** the arrows' colour scale: their 5th to 95th percentile temperature, so the room's own range spreads over the scale and the
+   *  supply jets saturate at the end */
+  const cfdTRange = (as: CfdArrow[]): [number, number] => {
+    const t = as.map((a) => a.t).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!t.length) return [20, 22];
+    const q = (p: number): number => t[Math.min(t.length - 1, Math.floor(p * (t.length - 1)))]!;
+    return q(0.05) === q(0.95) ? [q(0) - 0.5, q(1) + 0.5] : [q(0.05), q(0.95)];
+  };
+  const cfdMark = (space: string): React.ReactNode => {
+    if (!cfdTab) return null;
+    const h = cfdRuns.some((r) => r.space === space && r.peak === "heating"), c = cfdRuns.some((r) => r.space === space && r.peak === "cooling");
+    if (!h && !c) return null;
+    return <sup className="cfdMark" title={`cfd.db holds ${[h && "a heating", c && "a cooling"].filter(Boolean).join(" and ")} run of ${space} — click the name to show it`}>{h ? "\u2191H" : ""}{c ? "\u2193C" : ""}</sup>;
+  };
   const asmView = eff.has("assembly");
   // the ELECTRICAL sheet (2026-10-02) is the same canvas, bench and column over its own cards
   const elecSheet = asmView && MAIN_OF[sysFocus] === "electrical";
@@ -2239,7 +2518,34 @@ export function App(): React.ReactElement {
     const into = direct ? room : zoneResolver(zonesRef.current)(room);
     const via = into !== room ? into : null;
     const held = direct ?? (via ? roomHeld.get(via) ?? null : null);
-    return { held, via, className: held ? " held" : "", style: held ? { color: zoneColor(held.id) } : undefined, onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); zoomToSpace(room); if (!held && !via && asmCompiled.zones.length && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 40 - 24 * asmCompiled.zones.length), room, zoneId: "", zoneName: "" }); else if (direct && held && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 120), room, zoneId: held.id, zoneName: held.name }); } };
+    return { held, via, className: (held ? " held" : "") + (cfdTab && cfdPicks.includes(room) ? " cfdPicked" : ""), style: held ? { color: zoneColor(held.id) } : undefined, onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); zoomToSpace(room); if (cfdTab) return; if (!held && !via && asmCompiled.zones.length && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 40 - 24 * asmCompiled.zones.length), room, zoneId: "", zoneName: "" }); else if (direct && held && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 120), room, zoneId: held.id, zoneName: held.name }); } };
+  };
+  /** A SPACE CLICKED IN THE LEFT COLUMN (2026-11-11, the user: "on the cfd tab, switching space selection to another space … needs
+   *  to switch focus. If a cfd model doesn't exist for the selected space, then offer up a cfd setup"): on the CFD tab the room
+   *  becomes the one shown — its results when cfd.db holds a run of it, else its setup. While Spaces are being picked, a click
+   *  adds the space and a second click takes it out. */
+  const clickSpaceName = (name: string): void => {
+    if (!cfdTab) { selectSpaceName(name); return; }
+    if (cfdSelecting && cfdPickMode === "spaces") { setCfdPicks((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name])); return; }
+    selectSpaceName(name);
+    if (cfdSelecting && cfdPickMode === "space") setCfdPicks([name]);
+    cfdWantRef.current = name;
+    closeCfdBatch();
+    setCfdSpace(name); setCfdPick(null);
+    const has = (["heating", "cooling"] as const).filter((pk) => cfdRuns.some((r) => r.space === name && r.peak === pk));
+    if (has.length) { setCfdPeak(has.includes(cfdPeak) ? cfdPeak : has[0]!); setCfdView("results"); }
+    else void openCfdDialog(name);
+  };
+  /** SELECT, PRESSED AGAIN: the space set up on its PROCESSORS subtab, or the spaces' run reviewed in the frame below the view */
+  const pressCfdSelect = (): void => {
+    if (!cfdSelecting) { setCfdSelecting(true); setCfdPicks([]); return; }
+    setCfdSelecting(false);
+    if (cfdPickMode === "space") {
+      const sp = cfdPicks[0] ?? cfdSpace;
+      if (!sp) return;
+      cfdWantRef.current = sp; closeCfdBatch(); setCfdSetupTab("PROCESSORS");
+      if (cfdSetupIn?.space === sp) setCfdView("setup"); else void openCfdDialog(sp);
+    } else if (cfdPicks.length) void openCfdBatch(cfdPicks);
   };
   /** THE `?` ON A SPACE NAME (user, 2026-09-18: "I would place a '?' superscript flag on space names in the
    *  left space column, with tool tips explaining that the user should right click the ? to see a correction
@@ -2516,6 +2822,7 @@ export function App(): React.ReactElement {
       ...(bomLedgerRef.current?.tariff ? { tariff: bomLedgerRef.current.tariff } : {}),
       ...(bomStatementsRef.current.bills.length || bomStatementsRef.current.at ? { statements: bomStatementsRef.current } : {}),
       ...(bomLedgerRef.current?.calibration ? { calibration: bomLedgerRef.current.calibration } : {}),
+      ...(bomLedgerRef.current?.cfd ? { cfd: bomLedgerRef.current.cfd } : {}),
     };
     bomLedgerRef.current = ledger;
     void window.bom.saveLedger(shaRef.current, ledger);
@@ -2539,6 +2846,31 @@ export function App(): React.ReactElement {
     finally { setBomBusy(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bomMeters, saveBomLedger]);
+  // A ROOM'S CFD SETUP, kept in the BOM ledger (2026-11-10): written as it is typed, the save gathered over 800 ms so a typed
+  // name is one ledger version, not one per key
+  const cfdSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** the file whose BOM ledger is LOADED (2026-11-10): until it is, a CFD setup is held here and never saved — saving before the load
+   *  built a fresh ledger and wrote it over the project's (measured in the test window: the tariff, the statements and the
+   *  calibration gone, the CFD setup alone left) */
+  const bomLedgerLoadedFor = useRef<string | null>(null);
+  const cfdPending = useRef<Record<string, unknown>>({});
+  useEffect(() => {
+    setChoicesStore({
+      get: (sp) => ((bomLedgerLoadedFor.current === shaRef.current ? bomLedgerRef.current?.cfd?.rooms?.[sp] : cfdPending.current[sp]) as never) ?? null,
+      set: (sp, ch) => {
+        if (!shaRef.current) return;
+        if (bomLedgerLoadedFor.current !== shaRef.current) { cfdPending.current[sp] = ch; return; }
+        const base: BomLedger = bomLedgerRef.current ?? { sourceIfcSha256: shaRef.current, savedAt: "", imports: [], excluded: [], meterMap: {} };
+        bomLedgerRef.current = { ...base, cfd: { rooms: { ...(base.cfd?.rooms ?? {}), [sp]: ch } } };
+        if (cfdSaveTimer.current) clearTimeout(cfdSaveTimer.current);
+        cfdSaveTimer.current = setTimeout(() => { cfdSaveTimer.current = null; saveBomLedger(); }, 800);
+      },
+    });
+    // a setup edit still waiting on the 800 ms gather is written when the window goes
+    const flush = (): void => { if (cfdSaveTimer.current) { clearTimeout(cfdSaveTimer.current); cfdSaveTimer.current = null; saveBomLedger(); } };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); setChoicesStore(null); };
+  }, [saveBomLedger]);
   // THE CALIBRATION RUN'S INPUTS, kept in the BOM ledger: the PV connection date typed, the panels' export (its raw file under imports/)
   const setCalibration = useCallback((patch: NonNullable<BomLedger["calibration"]>) => {
     const base: BomLedger = bomLedgerRef.current ?? { sourceIfcSha256: shaRef.current, savedAt: "", imports: [], excluded: [], meterMap: {} };
@@ -3919,6 +4251,17 @@ export function App(): React.ReactElement {
       bemRef.current = null; setBem(null); lensRef.current = null; setLens("none"); setLegend(null); setSelZone(null);
       // the BOM ledger: the imports come back from their raw files with the user's column maps
       bomLedgerRef.current = bomLed;
+      bomLedgerLoadedFor.current = sha;
+      // a room's setup carried from the window's storage while the ledger was loading joins it now — a room the ledger holds wins
+      {
+        const pend = Object.entries(cfdPending.current).filter(([sp]) => !bomLed?.cfd?.rooms?.[sp]);
+        cfdPending.current = {};
+        if (pend.length) {
+          const base: BomLedger = bomLed ?? { sourceIfcSha256: sha, savedAt: "", imports: [], excluded: [], meterMap: {} };
+          bomLedgerRef.current = { ...base, cfd: { rooms: { ...(base.cfd?.rooms ?? {}), ...Object.fromEntries(pend) } } };
+          void window.bom.saveLedger(sha, bomLedgerRef.current);
+        }
+      }
       setBomTariff(bomLed?.tariff);
       bomRef.current = null; setBom(null); setBomPending(null);
       {
@@ -4136,7 +4479,7 @@ export function App(): React.ReactElement {
 
   return (
     <div className="app">
-      <ExplainLayer on={explain} scope={tab === "bim-edit" ? "BIM" : tab === "bom-ops" ? "BOM" : tab.replace(/^bem-/, "").toUpperCase()} />
+      <ExplainLayer on={explain} scope={tab === "bim-edit" ? "BIM" : tab === "bom-ops" || tab === "bom-cfd" ? "BOM" : tab.replace(/^bem-/, "").toUpperCase()} />
       {recovered && (
         <div className="projectNote warn" role="status">
           <span>The app recovered at {new Date(recovered.at).toLocaleTimeString()}: {recovered.why}. The page was reloaded{recovered.reopened ? ` and ${recovered.reopened.split(/[\\/]/).pop()} reopened` : ""}; your rulings and drafts were on disk.</span>
@@ -4388,8 +4731,8 @@ export function App(): React.ReactElement {
                   <div key={sp.name} className={`row space${soff ? " off" : ""}${related.spaces.has(sp.name) ? " sel" : ""}`}>
                     <button className={`eye${soff ? " off" : ""}`} onClick={() => toggleSpace(sp.name)} title={soff ? (off ? "show this space alone: its level comes back with the other spaces still hidden" : "show this space") : "hide this space"} aria-label={soff ? "show space" : "hide space"}><Eye on={!soff} /></button>
                     <span className="swatch" style={{ background: spaceColor(sp.colorIndex).getStyle() }} />
-                    {(() => { const h = roomNameProps(sp.name); return <span className={`name${roomDrag ? " draggable" : ""}${h.className}`} style={h.style} onContextMenu={h.onContextMenu} onClick={() => selectSpaceName(sp.name)} onPointerDown={roomDrag ? (e) => { e.preventDefault(); startPaletteDrag({ room: sp.name }, sp.name, e); } : undefined} title={`${h.held ? (h.via ? `merged into ${h.via} on ZONES, which is in zone ${h.held.name} on the SYSTEMS sheet` : `in zone ${h.held.name} on the SYSTEMS sheet · right-click to un-assign it`) : asmView ? (elecSheet ? "drag this space onto a Load center on the sheet: its zone goes on that load center; click to select it" : "drag this room onto a Zone on the sheet (or onto the sheet for a new Zone); click to select it") : "select this room: every cell that bounds it lights up and the table reads it"}\nright-click: zoom to it${h.held || h.via ? "" : " and assign it to a Zone"} · double right-click: back to the view before`}>{sp.name}</span>; })()}
-                    {voidMark(sp.name)}
+                    {(() => { const h = roomNameProps(sp.name); return <span className={`name${roomDrag ? " draggable" : ""}${h.className}`} style={h.style} onContextMenu={h.onContextMenu} onClick={() => clickSpaceName(sp.name)} onPointerDown={roomDrag ? (e) => { e.preventDefault(); startPaletteDrag({ room: sp.name }, sp.name, e); } : undefined} title={`${h.held ? (h.via ? `merged into ${h.via} on ZONES, which is in zone ${h.held.name} on the SYSTEMS sheet` : `in zone ${h.held.name} on the SYSTEMS sheet · right-click to un-assign it`) : asmView ? (elecSheet ? "drag this space onto a Load center on the sheet: its zone goes on that load center; click to select it" : "drag this room onto a Zone on the sheet (or onto the sheet for a new Zone); click to select it") : "select this room: every cell that bounds it lights up and the table reads it"}\nright-click: zoom to it${h.held || h.via ? "" : " and assign it to a Zone"} · double right-click: back to the view before`}>{sp.name}</span>; })()}
+                    {voidMark(sp.name)}{cfdMark(sp.name)}
                   </div>
                 );
               })}
@@ -4398,8 +4741,8 @@ export function App(): React.ReactElement {
                 return (
                   <div key={an} className={`row attic${aoff ? " off" : ""}${related.spaces.has(an) ? " sel" : ""}`}>
                     <button className={`eye${aoff ? " off" : ""}`} onClick={() => toggleSpace(an)} title={aoff ? (off ? "show this attic alone: its level comes back with the other spaces still hidden" : "show this attic") : "hide this attic"} aria-label={aoff ? "show attic" : "hide attic"}><Eye on={!aoff} /></button>
-                    {(() => { const h = roomNameProps(an); return <span className={`name${roomDrag ? " draggable" : ""}${h.className}`} style={h.style} onContextMenu={h.onContextMenu} onClick={() => selectSpaceName(an)} onPointerDown={roomDrag ? (e) => { e.preventDefault(); startPaletteDrag({ room: an }, an, e); } : undefined} title={`${h.held ? (h.via ? `merged into ${h.via} on ZONES, which is in zone ${h.held.name} on the SYSTEMS sheet` : `in zone ${h.held.name} on the SYSTEMS sheet · right-click to un-assign it`) : asmView ? (elecSheet ? "drag this space onto a Load center on the sheet: its zone goes on that load center" : "drag this attic onto a Zone on the sheet") : "select this void: every cell that bounds it lights up"}\nright-click: zoom to it${h.held || h.via ? "" : " and assign it to a Zone"} · double right-click: back to the view before`}>{an}</span>; })()}
-                    {voidMark(an)}
+                    {(() => { const h = roomNameProps(an); return <span className={`name${roomDrag ? " draggable" : ""}${h.className}`} style={h.style} onContextMenu={h.onContextMenu} onClick={() => clickSpaceName(an)} onPointerDown={roomDrag ? (e) => { e.preventDefault(); startPaletteDrag({ room: an }, an, e); } : undefined} title={`${h.held ? (h.via ? `merged into ${h.via} on ZONES, which is in zone ${h.held.name} on the SYSTEMS sheet` : `in zone ${h.held.name} on the SYSTEMS sheet · right-click to un-assign it`) : asmView ? (elecSheet ? "drag this space onto a Load center on the sheet: its zone goes on that load center" : "drag this attic onto a Zone on the sheet") : "select this void: every cell that bounds it lights up"}\nright-click: zoom to it${h.held || h.via ? "" : " and assign it to a Zone"} · double right-click: back to the view before`}>{an}</span>; })()}
+                    {voidMark(an)}{cfdMark(an)}
                   </div>
                 );
               })}
@@ -4507,7 +4850,21 @@ export function App(): React.ReactElement {
       <div className="viewTabs">
         {module !== "bem" ? (
           <>
-            {module === "bom" && <button className={costView ? "on" : ""} onClick={() => setBomView("cost")} title="the run's months and the bills, priced by the tariff applied in UTILITY below">ENERGY &amp; COST{pricedBom ? ` · ${pricedBom.card.name}` : ""}</button>}
+            {cfdTab && (cfdSetupIn || cfdSpace) && (() => {
+              // THE SETUP STAYS REACHABLE (2026-11-11, the user: "the CFD setup should not disappear after running the CFD model so
+              // assignments can be reviewed"): the tab is the room on screen's — its saved setup read again when it is not the one open
+              const sp = cfdView === "setup" && cfdSetupIn ? cfdSetupIn.space : cfdSpace ?? cfdSetupIn!.space;
+              return <button className={cfdView === "setup" ? "on" : ""} onClick={() => { if (cfdSetupIn?.space === sp) setCfdView("setup"); else { cfdWantRef.current = sp; void openCfdDialog(sp); } }} title="the room's setup — its terminals, their roles and flows, where the transfer air goes and comes from, as saved; add one on the floor, a wall or the ceiling">CFD · SETUP · {sp}</button>;
+            })()}
+            {cfdTab && (["heating", "cooling"] as const).map((pk) => {
+              const has = cfdRuns.some((r) => r.space === cfdSpace && r.peak === pk);
+              return <button key={pk} className={cfdView === "results" && cfdPeak === pk && has ? "on" : ""} disabled={!has} onClick={() => { setCfdPeak(pk); setCfdPick(null); setCfdView("results"); }}
+                title={has ? `the supply air at the ${pk} design peak: arrow length = air speed, thickness = the share of the supply air passing, colour = air temperature` : `cfd.db holds no ${pk} run of ${cfdSpace ?? "this space"}`}>CFD · {pk.toUpperCase()}{cfdSpace ? ` · ${cfdSpace}` : ""}</button>;
+            })}
+            {cfdTab && cfdShown && cfdView === "results" && <span className="cfdMotion" title="moving: each arrow travels along its own direction at the air's speed there, in real time · static: the arrows held at their points">
+              <button className={!cfdMoving ? "on" : ""} onClick={() => setCfdMoving(false)}>static</button><button className={cfdMoving ? "on" : ""} onClick={() => setCfdMoving(true)}>moving</button>
+            </span>}
+            {bomOps && <button className={costView ? "on" : ""} onClick={() => setBomView("cost")} title="the run's months and the bills, priced by the tariff applied in UTILITY below">ENERGY &amp; COST{pricedBom ? ` · ${pricedBom.card.name}` : ""}</button>}
             {module !== "bom" && <button className={eff.has("ifc") ? "on" : ""} onClick={() => toggleView("ifc")} title={eff.has("ifc") ? "collapse the IFC view" : "show the IFC view"}>IFC — FRAGMENTS</button>}
           </>
         ) : (
@@ -4607,8 +4964,48 @@ export function App(): React.ReactElement {
               }} onView={setMapBounds} />
           </div>
         )}
-        <div className="paneDb" hidden={!eff.has("idf") || mapView || asmView || calView}>
+        {cfdTab && cfdView === "setup" && cfdSetupIn && <div className="paneHtml paneMapSlot"><CfdSetupPlan s={cfdSet} imperial={imperial} /></div>}
+        <div className="paneDb" hidden={!eff.has("idf") || mapView || asmView || calView || (cfdTab && cfdView === "setup" && !!cfdSetupIn)}>
           <canvas ref={canvasRef} />
+          {cfdTab && cfdShown && (() => {
+            const tr = cfdTRange(cfdShown.arrows), k = arrowScale({ arrows: cfdShown.arrows, openings: [], tRange: tr });
+            const spd = (v: number): string => (imperial ? `${(v * 196.85).toFixed(0)} fpm` : `${v.toFixed(2)} m/s`);
+            const len = (m: number): string => (imperial ? `${(m / 0.3048).toFixed(1)} ft` : `${m.toFixed(2)} m`);
+            const flow = (c: number): string => (imperial ? `${c.toFixed(0)} cfm` : `${(c * 0.471947).toFixed(0)} L/s`);
+            return (
+              <div className="viewLegend">
+                <b>{cfdShown.run.space} · {cfdShown.run.peak} peak{cfdShown.run.designHour ? ` · ${cfdShown.run.designHour}` : ""} · {cfdShown.arrows.length.toLocaleString()} arrows</b>
+                <span>length = air speed: {spd(k.speedFull)} draws {len(k.lengthFull)}</span>
+                <span>thickness = the supply air passing: the thickest {flow(k.cfmFull)} of {flow(cfdShown.openings.filter((o) => o.dir === "in").reduce((t, o) => t + o.cfm, 0))} supplied</span>
+                {/* the scale is the arrows' 5th–95th percentile so the room's own spread shows; the ends are therefore "at or
+                    below / above" — never a minimum the arrows do not have (the user, 2026-11-10: the cooling legend read 72.7 °F
+                    with the supply at 61 °F). The label ABOVE the bar, the temperatures BELOW it, the room's final average marked
+                    at its place on the scale (the user, 2026-11-10) */}
+                <div className="cfdScaleHead">colour = air temperature</div>
+                {(() => {
+                  const mean = cfdShown.metrics.find((m) => m.key === "room_mean_c")?.value;
+                  const f = mean != null && Number.isFinite(mean) && tr[1] > tr[0] ? Math.min(1, Math.max(0, (mean - tr[0]) / (tr[1] - tr[0]))) : null;
+                  return <>
+                    <div className="cfdScale"><div className="legendBar cfdT" />{f != null && <span className="cfdScaleTick" style={{ left: `${100 * f}%` }} />}</div>
+                    <div className="cfdScaleEnds">
+                      <span>≤ {fmtTemp(tr[0], imperial)}</span>
+                      {f != null && <span className="cfdScaleMean" style={{ left: `${100 * f}%` }} title="the room air's mean over the run's averaging window (THE ROOM in the column)">room average {fmtTemp(mean!, imperial)}</span>}
+                      <span>≥ {fmtTemp(tr[1], imperial)}</span>
+                    </div>
+                  </>;
+                })()}
+                {(() => {
+                  const ts = cfdShown.arrows.map((a) => a.t).filter(Number.isFinite);
+                  const sup = cfdShown.openings.filter((o) => o.dir === "in" && o.tC != null).map((o) => o.tC as number);
+                  if (!ts.length) return null;
+                  const lo = Math.min(...ts), hi = Math.max(...ts);
+                  const below = ts.filter((t) => t <= tr[0]).length, above = ts.filter((t) => t >= tr[1]).length;
+                  return <span>arrows {fmtTemp(lo, imperial)} – {fmtTemp(hi, imperial)}{sup.length ? ` · supply ${fmtTemp(sup[0]!, imperial)}` : ""} · {below} at the cold end, {above} at the warm end (the jet mixes into the room within about a foot of the register)</span>;
+                })()}
+                <span className="muted">boxes: supplies yellow, outlets grey · drawn over the model</span>
+              </div>
+            );
+          })()}
           {intensityLegend && tab === "bem-site" && (
             <div className="viewLegend">
               <b>solar intensity · {imperial ? "W/ft²" : "W/m²"} on {intensityLegend.painted} exterior surfaces</b>
@@ -4754,6 +5151,43 @@ export function App(): React.ReactElement {
               </div>
             </section>
           )}
+          {cfdTab && cfdBatch && (
+            <section className="asmSection">
+              <h4 title="the spaces selected, each with the setup made for it, the peaks and the processors">CFD · SPACES · PROCESSORS</h4>
+              <CfdBatchDialog inline rooms={cfdBatch.rooms} idf={cfdBatch.idf} engine={cfdBatch.engine} machine={cfdBatch.machine}
+                offerOf={(space, faces) => cfdOffer({ space, faces, idf: cfdBatch.idf, idfDb: cfdBatch.idfDb, bemDb: cfdBatch.bemDb, stamp: cfdBatch.stamp })}
+                onCancel={closeCfdBatch}
+                onSetUp={(space) => { cfdWantRef.current = space; closeCfdBatch(); void openCfdDialog(space); }}
+                onRun={(jobs, plan) => { const d = cfdBatch; closeCfdBatch(); void runCfdJobs(d.stamp, jobs.map((j, i) => ({ space: j.space, case: j.case, np: plan.jobs[i]?.procs ?? 1 }))); }} />
+            </section>
+          )}
+          {cfdTab && !cfdBatch && cfdView === "setup" && cfdSetupIn && (
+            <section className="asmSection">
+              <h4 title="the room's setup, tab by tab — saved as it is set, in the project's BOM ledger">CFD · SETUP · {cfdSetupIn.space} · {cfdSetupTab}</h4>
+              <CfdSetupFrame s={cfdSet} tab={cfdSetupTab} onTab={setCfdSetupTab} imperial={imperial}
+                supply={<SupplyAirPanel space={cfdSetupIn.space} peak={cfdPeak} offer={cfdSetupIn.offer} why={null} saved={cfdSet.choices} imperial={imperial}
+                  lastRunC={(([...cfdRuns].reverse().find((r) => r.space === cfdSetupIn.space && r.peak === cfdPeak)?.settings) as { supply_c?: number } | undefined)?.supply_c ?? null}
+                  onChange={(pk, sc) => cfdSet.update((c) => ({ ...c, supply: { ...(c.supply ?? {}), [pk]: sc } }))}
+                  onSetpoint={(pk, v) => cfdSet.update((c) => ({ ...c, setpoints: { ...c.setpoints, [pk]: v ?? cfdSetupIn.offer.peaks.find((p) => p.peak === pk)?.setpointC ?? null } }))} />}
+                onRun={(cases, np) => void runCfdJobs(cfdSetupIn.stamp, cases.map((c) => ({ space: cfdSetupIn.space, case: c, np })))} />
+            </section>
+          )}
+          {cfdTab && !cfdBatch && cfdView === "results" && (
+            <section className="asmSection">
+              <h4 title="the run's air drawn as slices, its speeds and the flow through each opening — each its own tab">CFD · {cfdFrameTab}{cfdShown ? ` · ${cfdShown.run.space} · ${cfdShown.run.peak}` : ""}</h4>
+              <CfdFrame shown={cfdShown} tab={cfdFrameTab} onTab={setCfdFrameTab} field={cfdField} onField={setCfdField} imperial={imperial}
+                supply={(() => {
+                  const sp = cfdSpace, saved = sp ? loadCfdChoices(sp) : null;
+                  void cfdSupplyRev; // re-read the saved choices after an edit
+                  const last = [...cfdRuns].reverse().find((r) => r.space === sp && r.peak === cfdPeak);
+                  const lastC = last && cfdShown?.run.id === last.id ? cfdShown.openings.find((o) => o.dir === "in")?.tC ?? null : (last?.settings as { supply_c?: number } | undefined)?.supply_c ?? null;
+                  return <SupplyAirPanel space={sp} peak={cfdPeak} offer={cfdSupplyOffer?.space === sp ? cfdSupplyOffer.offer : null} why={cfdSupplyOffer?.space === sp ? cfdSupplyOffer.why : null}
+                    saved={saved} lastRunC={lastC} imperial={imperial}
+                    onChange={(pk, sc) => { if (!sp) return; if (cfdSetupIn?.space === sp) { cfdSet.update((c) => ({ ...c, supply: { ...(c.supply ?? {}), [pk]: sc } })); setCfdSupplyRev((n) => n + 1); return; } const cur = loadCfdChoices(sp) ?? {}; saveCfdChoices(sp, { ...cur, supply: { ...(cur.supply ?? {}), [pk]: sc } } as never); setCfdSupplyRev((n) => n + 1); }}
+                    onSetpoint={(pk, c) => { if (!sp) return; if (cfdSetupIn?.space === sp) { const th = cfdSupplyOffer?.offer?.peaks.find((p) => p.peak === pk)?.setpointC ?? null; cfdSet.update((x) => ({ ...x, setpoints: { ...x.setpoints, [pk]: c ?? th } })); setCfdSupplyRev((n) => n + 1); return; } const cur = loadCfdChoices(sp) ?? {}; const th = cfdSupplyOffer?.offer?.peaks.find((p) => p.peak === pk)?.setpointC ?? null; saveCfdChoices(sp, { ...cur, setpoints: { ...(cur.setpoints ?? {}), [pk]: c ?? th } } as never); setCfdSupplyRev((n) => n + 1); }} />;
+                })()} />
+            </section>
+          )}
           {module === "bom" && costView && (
             <section className="asmSection">
               <h4 title={bomRail === "UTILITY" ? "the tariff cards — select one for its details in the column" : bomRail === "WEATHER" ? "the weather the run used, and an actual year" : "the bills imported"}>BOM · {bomRail}</h4>
@@ -4802,7 +5236,7 @@ export function App(): React.ReactElement {
                   : undefined} />
             </section>
           )}
-          <section hidden={!views.idf || (module === "bom" && costView) || (module === "bem" && (tab === "bem-constructions" || tab === "bem-site" || tab === "bem-systems" || tab === "bem-zones" || tab === "bem-schedules" || (tab === "bem-run" && (graphView || reportView))))}>
+          <section hidden={!views.idf || (module === "bom" && costView) || cfdTab || (module === "bem" && (tab === "bem-constructions" || tab === "bem-site" || tab === "bem-systems" || tab === "bem-zones" || tab === "bem-schedules" || (tab === "bem-run" && (graphView || reportView))))}>
             <h4>IDF-DB · {shownSpace ?? (sel ? "no room claims this element" : "—")} · net areas in {imperial ? "ft²" : "m²"}</h4>
             {related.tableSpaces.length > 1 && (
               <div className="spaceTabs">
@@ -4890,7 +5324,40 @@ export function App(): React.ReactElement {
                 : <><div className="idfInfo">{epwLine}</div><div className="idfInfo">a typical year cannot calibrate against bills metered in a real one — an actual year can</div></>}
             </div>
           )}
-          {module === "bom" && (
+          {cfdTab && (
+            <div className="cfdProcFrame">
+              <div className="barHead">PROCESSORS</div>
+              <div className="idfInfo">{cfdMachine ? machineLine(cfdMachine) : "reading this machine…"}</div>
+              {/* SPACE OR SPACES, THEN SELECT (2026-11-11, the user) — one excludes the other */}
+              <div className="cfdPickBar">
+                {(["space", "spaces"] as const).map((m) => (
+                  <button key={m} className={`qaBtn${cfdPickMode === m ? " on" : ""}`} onClick={() => { setCfdPickMode((x) => (x === m ? null : m)); setCfdSelecting(false); setCfdPicks([]); }}
+                    title={m === "space" ? "run one space, split across the processors" : "run several spaces side by side, each on a share of the processors"}>{m === "space" ? "Space" : "Spaces"}</button>
+                ))}
+                {cfdPickMode && <button className={`qaBtn cfdGo${cfdSelecting ? " on" : ""}`} onClick={pressCfdSelect} title="Select space in left column and press this Select button again when ready to run">Select</button>}
+              </div>
+              {cfdPickMode && cfdSelecting && <div className="idfInfo">{cfdPickMode === "space" ? (cfdPicks[0] ?? cfdSpace ?? "no space yet") : cfdPicks.length ? `${cfdPicks.length} selected: ${cfdPicks.join(" · ")}` : "none selected"}</div>}
+              {!cfdSelecting && (cfdBatch || (cfdPickMode === "space" && cfdView === "setup")) && <div className="idfInfo muted">review the PROCESSORS tab in the frame below the view, then run</div>}
+              {cfdJobs.length > 0 && <div className="idfInfo">{cfdJobs.length} run{cfdJobs.length === 1 ? "" : "s"} · {cfdJobs.filter((r) => r.label !== "waiting" && !r.error).reduce((t, r) => t + r.np, 0)} processes busy</div>}
+            </div>
+          )}
+          {cfdTab && cfdJobs.length > 1 && <div className="cfdRunHead"><b>CFD · {cfdJobs.length} runs</b> <button className="qaBtn" onClick={() => { for (const r of cfdJobs) if (!r.error) void window.cfd.cancel(r.stamp); }} title="stop every run; their folders stay in data/cfd/runs/">Cancel all</button></div>}
+          {cfdTab && cfdJobs.map((r) => (
+            <div key={r.stamp} className="cfdRunBox">
+              <b>CFD · {r.space} · {r.peak} · {r.np > 1 ? `${r.np} processes` : "serial"}</b>
+              {r.diag && <div className="cfdDiag">
+                <div><b>Why:</b> {r.diag.cause}</div>
+                <div><b>What to do</b> <span className="muted">({r.diag.by === "you" ? "your choices in Run CFD…" : r.diag.by})</span><b>:</b> {r.diag.remedy}</div>
+                <details><summary className="muted">OpenFOAM's words</summary><pre>{r.diag.excerpt.join("\n")}</pre></details>
+              </div>}
+              <span>{r.error ? <span className={r.diag ? "muted" : "bad"}>✗ {r.error}</span> : r.label === "waiting" ? "waiting for processors" : `step ${r.step + 1} of ${r.steps} · ${r.label}${r.label === "the solve" ? ` · iteration ${r.iteration.toLocaleString()} of ${r.iterations.toLocaleString()}` : ""}`}</span>
+              {r.label === "the solve" && !r.error && <div className="bar"><span style={{ width: `${(100 * r.iteration) / Math.max(1, r.iterations)}%` }} /></div>}
+              <span className="muted">{r.last}</span>
+              {r.error ? <button className="qaBtn" onClick={() => setCfdJobs((x) => x.filter((y) => y.stamp !== r.stamp))}>Dismiss</button> : <button className="qaBtn" onClick={() => void window.cfd.cancel(r.stamp)} title="stop OpenFOAM; the run's folder stays in data/cfd/runs/">Cancel the run</button>}
+            </div>
+          ))}
+          {cfdTab && <CfdColumn shown={cfdShown} runs={cfdRuns} imperial={imperial} onPick={setCfdPick} />}
+          {bomOps && (
             <BomColumn place={{ address: siteAddress ?? null, county: countyZone?.county || null, state: countyZone?.state || null }}
               imports={bomImports} pending={bomPending} outcome={bom} bemStamp={bem?.stamp ?? null}
               metersAvailable={[...new Set((bem?.daily ?? []).map((d) => d.name))]} meters={bomMeters} epwLine={epwLine} busy={bomBusy}
