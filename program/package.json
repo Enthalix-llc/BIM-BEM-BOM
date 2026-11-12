@@ -1,6 +1,6 @@
 {
   "name": "enthalix",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "description": "BIM-BEM-BOM (Enthalix LLC): building models (IFC) into EnergyPlus energy models, compared with the building's measured operation",
   "license": "Apache-2.0",
