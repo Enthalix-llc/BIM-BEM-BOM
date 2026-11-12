@@ -37,7 +37,7 @@ jobs:
         shell: bash
         working-directory: program
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The sample is the published file, byte for byte
         working-directory: .
@@ -48,12 +48,12 @@ jobs:
           echo "published $want"; echo "checkout  $got"
           test "$want" = "$got"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: program/pnpm-lock.yaml
 
@@ -96,7 +96,7 @@ jobs:
       - name: Build the installer
         run: ./node_modules/.bin/electron-builder --publish never
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bim-bem-bom-${{ runner.os }}
