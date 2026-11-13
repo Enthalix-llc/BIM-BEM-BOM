@@ -45,7 +45,10 @@ export interface FloorOpening { key: string; face: number; y: number; ring: Arra
 /** ANOTHER ROOM OF THE MODEL air may come from (2026-11-11, the user: "Transfer air should be the room temperature from which it
  *  transfers from"): its zone in the run's IDF and that zone's thermostat per peak — null when the zone is not conditioned on that side */
 export interface RoomTemp { space: string; zone: string; conditioned: boolean; heatingC: number | null; coolingC: number | null }
-export interface CfdOffer { space: string; zone: string | null; faces: RoomFace[]; enclosure: Omit<Enclosure, "faces">; peaks: PeakChoice[]; terminals: TerminalOffer[]; doors: DoorOffer[]; floorOpenings: FloorOpening[]; refusals: string[]; supply: Record<"heating" | "cooling", SupplySource | null>; rooms: RoomTemp[] }
+/** A WINDOW OF THE ROOM (2026-11-13, the user: "the windows should be shown on the cfd setup plan view as they impact wall drafts,
+ *  and the terminals are typically aligned"): the IDF's own subsurfaces on the room — windows, glass doors, exterior doors */
+export interface WindowOffer { name: string; kind: "window" | "glassdoor" | "door"; pts: V3[] }
+export interface CfdOffer { space: string; zone: string | null; faces: RoomFace[]; enclosure: Omit<Enclosure, "faces">; peaks: PeakChoice[]; terminals: TerminalOffer[]; doors: DoorOffer[]; windows: WindowOffer[]; floorOpenings: FloorOpening[]; refusals: string[]; supply: Record<"heating" | "cooling", SupplySource | null>; rooms: RoomTemp[] }
 
 /** THE SUPPLY AIR FROM THE SYSTEM (the user, 2026-11-10: "expected supply temperature … picked up from mechanical system
  *  definition"): read from the run's own IDF for the unit that serves the room's zone — first a supply temperature typed on the
@@ -154,7 +157,8 @@ export function cfdOffer(q: { space: string; faces: RoomFace[]; idf: string; idf
     const written = subCentres.some((sc) => Math.hypot(sc[0]! - c[0], sc[1]! - c[1], sc[2]! - c[2]) < 0.4);
     if (near && !written) doors.push({ name: o.name.split(":").slice(-2).join(":"), elementId: o.elementId, quad: q, widthM: Math.hypot(q[1]![0] - q[0]![0], q[1]![2] - q[0]![2]), isExternal: o.isExternal });
   }
-  return { space: p.space, zone: zoneOf, faces: p.faces, enclosure, peaks, terminals, doors, floorOpenings: floorOpeningsOf(p.faces, p.space, p.idfDb), refusals, supply: supplyOf(p.idf, p.bemDb, zoneOf), rooms };
+  const windows: WindowOffer[] = subs.map((o) => ({ name: o.name, kind: /GlassDoor/i.test(o.type) ? "glassdoor" as const : /Door/i.test(o.type) ? "door" as const : "window" as const, pts: o.pts }));
+  return { space: p.space, zone: zoneOf, faces: p.faces, enclosure, peaks, terminals, doors, windows, floorOpenings: floorOpeningsOf(p.faces, p.space, p.idfDb), refusals, supply: supplyOf(p.idf, p.bemDb, zoneOf), rooms };
 }
 
 type Ring2 = Array<[number, number]>;

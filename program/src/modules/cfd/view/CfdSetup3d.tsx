@@ -101,7 +101,7 @@ export function CfdSetup3d({ s, imperial, tool }: { s: CfdSetupState; imperial: 
     if (!w || !faces) return;
     for (const c of [...w.terms.children]) { w.terms.remove(c); (c as THREE.Mesh).geometry?.dispose(); }
     const sel = new THREE.Color(cssVar("--sel", "#ffd166")), bad = new THREE.Color(cssVar("--warn", "#f87171"));
-    for (const t of s.terminals) {
+    for (const t of s.terminals.filter((q) => q.use)) {
       // drawn ON its face (2026-11-10): the box's footprint with each corner on the face's plane — a grille on a slope lies on the slope
       const f = faces[t.face], c = [0, 1, 2].map((a) => (t.box.lo[a]! + t.box.hi[a]!) / 2) as V3;
       const ax = f ? ([0, 1, 2] as const).reduce((m, i) => (Math.abs(f.n[i]) > Math.abs(f.n[m]) ? i : m), 0 as 0 | 1 | 2) : 1;

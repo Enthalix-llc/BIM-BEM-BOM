@@ -1385,6 +1385,11 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .cfdFloor { fill: rgba(140, 150, 170, 0.18); stroke: rgba(160, 170, 190, 0.5); stroke-width: 0.01; }
 .cfdCeil { fill: none; stroke: rgba(160, 170, 190, 0.35); stroke-width: 0.01; stroke-dasharray: 0.06 0.05; }
 .cfdWall { stroke: #c8cdd8; stroke-width: 0.06; stroke-linecap: square; }
+/* the room's windows (2026-11-13): a blue bar on the wall in plan, a pane in a wall's elevation */
+.cfdWindow line { stroke: #6fb7ff; stroke-width: 0.09; stroke-linecap: butt; }
+.cfdWindow.door line { stroke: #b08a5a; }
+.cfdWindow rect { fill: rgba(111, 183, 255, 0.28); stroke: #6fb7ff; stroke-width: 0.015; }
+.cfdWindow.door rect { fill: rgba(176, 138, 90, 0.25); stroke: #b08a5a; }
 .cfdWall.on { stroke: var(--sel); }
 .cfdDoor { stroke: #b08a5a; stroke-width: 0.09; }
 .cfdDoor.open { stroke-dasharray: 0.08 0.05; }

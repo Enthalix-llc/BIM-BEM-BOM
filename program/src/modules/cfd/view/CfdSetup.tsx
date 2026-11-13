@@ -239,7 +239,29 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
     let dx = x - d.x, dz = z - d.z;
     const t = s.terminals.find((q) => q.key === d.key);
     if (!t || (Math.abs(dx) < 1e-4 && Math.abs(dz) < 1e-4)) return;
-    if (t.host === "wall") { const f = faces[t.face]!, tx = -f.n[2], tz = f.n[0], along = dx * tx + dz * tz; dx = along * tx; dz = along * tz; }
+    if (t.host === "wall") {
+      // ONTO ANOTHER WALL (2026-11-13, the user: "the transfer grille was locked to moving left & right when it needed to be moved to
+      // a wall nearby"): when the pointer comes nearer another wall of the room, the grille goes onto it — its height kept, its width
+      // and height turned with the wall
+      const cur = faces[t.face]!, cy = (t.box.lo[1] + t.box.hi[1]) / 2, curD = distSeg([x, z], wallSeg(cur));
+      const near = faces.map((f, i) => ({ f, i })).filter(({ f, i }) => i !== t.face && hostOf(f) === "wall")
+        .map((w) => { const ys = w.f.outer.map((p) => p[1]); return { ...w, d: distSeg([x, z], wallSeg(w.f)), spans: cy >= Math.min(...ys) && cy <= Math.max(...ys) }; })
+        .filter((w) => w.d < 0.4 && w.d < curD - 0.05).sort((p, q) => Number(q.spans) - Number(p.spans) || p.d - q.d)[0];
+      if (near) {
+        const [a, b] = wallSeg(near.f), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const [w, h] = wallWH(cur, t.size), size = wallSize(near.f, w, h), half = Math.min(0.5, w / 2 / L);
+        const k = Math.max(half, Math.min(1 - half, ((x - a[0]) * (b[0] - a[0]) + (z - a[1]) * (b[1] - a[1])) / (L * L)));
+        const ys = near.f.outer.map((p) => p[1]), y = Math.max(Math.min(...ys) + h / 2, Math.min(Math.max(...ys) - h / 2, cy));
+        const p: V3 = [a[0] + k * (b[0] - a[0]), y, a[1] + k * (b[1] - a[1])];
+        drag.current = { ...d, x, z };
+        editTerminal(s, t.key, {
+          file: (c) => { const o = t.offer, bc: V3 = [0, 1, 2].map((q) => (o.bbLo[q]! + o.bbHi[q]!) / 2) as V3; return { ...c, face: near.i, size, nudge: [p[0] - bc[0], p[1] - bc[1], p[2] - bc[2]] }; },
+          added: (ad) => ({ ...ad, face: near.i, size, c: p }),
+        });
+        return;
+      }
+      const f = cur, tx = -f.n[2], tz = f.n[0], along = dx * tx + dz * tz; dx = along * tx; dz = along * tz;
+    }
     drag.current = { ...d, x, z };
     editTerminal(s, t.key, {
       file: (c) => ({ ...c, nudge: [c.nudge[0] + dx, c.nudge[1], c.nudge[2] + dz] }),
@@ -252,6 +274,22 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
     if (t.source === "added") { if (window.confirm(`Remove "${t.label}"?`)) s.update((c) => ({ ...c, added: (c.added ?? []).filter((a) => a.id !== t.key) })); }
     else editTerminal(s, t.key, { file: (c) => ({ ...c, use: !c.use }) });
   };
+  // THE WINDOWS (2026-11-13): where a wall is cold and drafts start — a blue bar on its wall, with its sill and head
+  const windowsOnPlan = (inp.offer.windows ?? []).map((w, i) => {
+    const xs = w.pts.map((p) => p[0]), zs = w.pts.map((p) => p[2]), ys = w.pts.map((p) => p[1]);
+    let a: [number, number] = [Math.min(...xs), Math.min(...zs)], b: [number, number] = [Math.max(...xs), Math.max(...zs)];
+    // the IDF puts a window on the wall's outer plane: drawn on the room's own wall nearest it, so it reads on the wall line
+    const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const wall = faces.filter((f) => hostOf(f) === "wall").map((f) => ({ f, dd: distSeg(mid, wallSeg(f)) })).sort((p, q) => p.dd - q.dd)[0];
+    if (wall && wall.dd < 0.6) { const n = wall.f.n, o = wall.f.outer[0]!, off = (q: [number, number]): [number, number] => { const k = (q[0] - o[0]) * n[0] + (q[1] - o[2]) * n[2]; return [q[0] - k * n[0], q[1] - k * n[2]]; }; a = off(a); b = off(b); }
+    // the label OUTSIDE the room, clear of the terminals' labels inside it
+    const ctr = ((): [number, number] => { const fl = faces.filter((f) => hostOf(f) === "floor").flatMap((f) => f.outer); return fl.length ? [fl.reduce((t, q) => t + q[0], 0) / fl.length, fl.reduce((t, q) => t + q[2], 0) / fl.length] : [0, 0]; })();
+    const m: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], vert = Math.abs(b[0] - a[0]) < Math.abs(b[1] - a[1]);
+    const c = vert ? [m[0] + Math.sign(m[0] - ctr[0]) * fs * 2.2, m[1]] : [m[0], m[1] + (m[1] > ctr[1] ? fs * 1.3 : -fs * 0.6)];
+    return <g key={`win${i}`} className={`cfdWindow ${w.kind}`}><title>{`${w.name} · ${w.kind === "window" ? "window" : w.kind === "glassdoor" ? "glass door" : "exterior door"} · sill ${len(Math.min(...ys) - floorY)} · head ${len(Math.max(...ys) - floorY)} up`}</title>
+      <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} />
+      <text x={c[0]} y={c[1]!} fontSize={fs * 0.7} textAnchor="middle" className="cfdPlanText muted" transform={vert ? `rotate(-90 ${c[0]} ${c[1]})` : undefined}>{w.kind === "window" ? "win" : w.kind === "glassdoor" ? "glass dr" : "ext dr"} · {len(Math.min(...ys) - floorY)}–{len(Math.max(...ys) - floorY)}</text></g>;
+  });
   return (
     <div className="cfdSetupPlan">
       <div className="cfdPlanTools">
@@ -292,7 +330,9 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
           {faces.map((f, i) => { if (hostOf(f) !== "wall") return null; const [a, b] = wallSeg(f); return <line key={`w${i}`} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} className={`cfdWall${wallFace === i ? " on" : ""}`} />; })}
           {inp.offer.doors.map((d, i) => { const xs = d.quad.map((p) => p[0]), zs = d.quad.map((p) => p[2]); const c = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2]; const mode = ch.doors[String(d.elementId)]?.mode ?? "sealed";
             return <g key={`d${i}`}><line x1={Math.min(...xs)} y1={Math.min(...zs)} x2={Math.max(...xs)} y2={Math.max(...zs)} className={`cfdDoor ${mode}`} /><text x={c[0]} y={c[1]! - 0.08} fontSize={fs * 0.8} className="cfdPlanText muted">door · {mode}</text></g>; })}
-          {s.terminals.map((t) => {
+          {/* a terminal switched off is not drawn (2026-11-13, the user: "greyed still confuses the view") — the table keeps it */}
+          {windowsOnPlan}
+          {s.terminals.filter((t) => t.use).map((t) => {
             const lo = t.box.lo, hi = t.box.hi, w = Math.max(0.04, hi[0] - lo[0]), h = Math.max(0.04, hi[2] - lo[2]);
             const bad = outside(t), on = s.sel === t.key, iss = s.issues.get(t.key);
             return (
@@ -339,13 +379,18 @@ function WallElevation({ faces, face, floorY, s, imperial, placing, onPlace, onC
     if (!hit) return;
     onPlace([u * t[0] + d * f.n[0], y, u * t[1] + d * f.n[2]], hit.i);
   };
-  const on = s.terminals.filter((q) => q.host === "wall" && set.some((x) => x.i === q.face));
+  const on = s.terminals.filter((q) => q.use && q.host === "wall" && set.some((x) => x.i === q.face));
+  // the room's windows in this wall's plane, drawn behind the grilles
+  const wins = (s.inp?.offer.windows ?? []).filter((w) => w.pts.every((p) => Math.abs(p[0] * f.n[0] + p[2] * f.n[2] - d) < 0.4));
   return (
     <div className="cfdElevation">
       <div className="cfdPlanTools"><b>{faceLabel(f).replace(/ \(.*/, "")}</b> · {rings.length} face{rings.length === 1 ? "" : "s"} in this plane · seen from inside the room · {placing ? "click where the grille goes" : "pick + wall to add"} <ZoomButtons z={zm} /> <button onClick={onClose}>close</button></div>
       <svg ref={svg} viewBox={zm.viewBox} preserveAspectRatio="xMidYMid meet" className="cfdPlanSvg" onClick={click} onPointerDown={zm.down} onPointerMove={zm.move} onPointerUp={zm.up}>
         {rings.map((x) => <polygon key={x.i} points={x.r.map((q) => `${q[0]},${-q[1]}`).join(" ")} className="cfdFloor" />)}
         <line x1={u0} y1={-floorY} x2={u1} y2={-floorY} className="cfdNorth" />
+        {wins.map((w, i) => { const q = w.pts.map(uv), us2 = q.map((x) => x[0]), ys2 = q.map((x) => x[1]);
+          return <g key={`win${i}`} className={`cfdWindow ${w.kind}`}><title>{`${w.name} · sill ${len(Math.min(...ys2) - floorY)} · head ${len(Math.max(...ys2) - floorY)} up`}</title>
+            <rect x={Math.min(...us2)} y={-Math.max(...ys2)} width={Math.max(...us2) - Math.min(...us2)} height={Math.max(...ys2) - Math.min(...ys2)} /></g>; })}
         {on.map((q) => { const a = uv(q.box.lo), b = uv(q.box.hi), lo: [number, number] = [Math.min(a[0], b[0]), Math.min(a[1], b[1])], hi: [number, number] = [Math.max(a[0], b[0]), Math.max(a[1], b[1])];
           return <g key={q.key} className={`cfdTerm wall${s.sel === q.key ? " sel" : ""}`} onClick={(e) => { e.stopPropagation(); s.setSel(q.key); }}>
             <rect x={lo[0]} y={-hi[1]} width={hi[0] - lo[0]} height={hi[1] - lo[1]} fill={ROLE_COLOUR[q.role]} />
@@ -406,7 +451,7 @@ export function CfdSetupFrame({ s, tab, onTab, imperial, supply, onRun }: { s: C
                     <td><input type="checkbox" checked={t.use} onChange={(e) => editTerminal(s, t.key, { file: (c) => ({ ...c, use: e.target.checked }), added: (a) => ({ ...a, use: e.target.checked }) })} /></td>
                     <td><input className="cfdName" value={t.label} onChange={(e) => editTerminal(s, t.key, { file: (c) => ({ ...c, label: e.target.value }), added: (a) => ({ ...a, label: e.target.value }) })} />{t.source === "file" && t.label !== t.name ? <div className="muted cfdSmall">{t.name}</div> : t.source === "added" ? <div className="muted cfdSmall">added · {t.host}</div> : null}</td>
                     <td>{t.source === "file"
-                      ? <select value={t.face} onChange={(e) => editTerminal(s, t.key, { file: (c) => ({ ...c, face: +e.target.value, nudge: [0, 0, 0] }) })}>{t.offer.candidates.map((cf) => <option key={cf.face} value={cf.face}>{cf.label}</option>)}{t.offer.candidates.some((cf) => cf.face === t.face) ? null : <option value={t.face}>{faceLabel(f)} (placed in 3-D)</option>}</select>
+                      ? <select value={t.face} onChange={(e) => editTerminal(s, t.key, { file: (c) => ({ ...c, face: +e.target.value, nudge: [0, 0, 0] }) })}>{t.offer.candidates.map((cf) => <option key={cf.face} value={cf.face}>{cf.label}</option>)}{t.offer.candidates.some((cf) => cf.face === t.face) ? null : <option value={t.face}>{faceLabel(f)} (placed on the plan or in 3-D)</option>}</select>
                       : <span className="muted">{faceLabel(f)}</span>}</td>
                     <td><select value={t.role} onChange={(e) => editTerminal(s, t.key, { file: (c) => ({ ...c, role: e.target.value as TerminalRole | "" }), added: (a) => ({ ...a, role: e.target.value as TerminalRole | "" }) })}>
                       <option value="">—</option><option value="supply">supply</option><option value="return">return</option><option value="transfer">transfer out (free)</option><option value="transfer-in">transfer in (from the next room)</option><option value="exhaust">exhaust</option>
