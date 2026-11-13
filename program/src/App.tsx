@@ -5015,7 +5015,7 @@ export function App(): React.ReactElement {
           </>
         )}
         {/* RUN's model takes the mouse alone — left-drag orbits, right-drag pans (user, 2026-10-12: "without all the view orientation") */}
-        {(eff.has("idf") || eff.has("ifc")) && !mapView && !asmView && !calView && !(module === "bem" && tab === "bem-run") && <ViewTools drag={drag} onDrag={setDrag} onView={viewTo} onZoom={(step) => ifcPaneRef.current?.zoom(step)} />}
+        {(eff.has("idf") || eff.has("ifc")) && !mapView && !asmView && !calView && !(module === "bem" && tab === "bem-run") && !(cfdTab && cfdView === "setup" && cfdSetupIn) && <ViewTools drag={drag} onDrag={setDrag} onView={viewTo} onZoom={(step) => ifcPaneRef.current?.zoom(step)} />}
         {/* BIM's IDF-DB tab at the far right, after the view tools (user, 2026-10-16): it names the RIGHT pane of the split, so it sits over it */}
         {module === "bim" && <button className={`farRight${eff.has("idf") ? " on" : ""}`} onClick={() => toggleView("idf")} title={eff.has("idf") ? "collapse the IDF-DB view" : "show the IDF-DB view"}>IDF-DB — SINGLE PLANE</button>}
       </div>

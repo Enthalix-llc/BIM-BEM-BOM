@@ -108,6 +108,65 @@ const distSeg = (p: [number, number], [a, b]: [[number, number], [number, number
 };
 
 
+/** ZOOM AND PAN ON A DRAWING (2026-11-13, the user: "there is a need for zoom and pan in order to read the on screen information"):
+ *  the wheel zooms about the pointer, a drag on the drawing's ground (left or middle button) pans, a click that did not move is
+ *  still a click; − · + · fit in the drawing's own tool line. The view box only — nothing of the room or the setup moves. */
+type Box = { x: number; y: number; w: number; h: number };
+function useSvgZoom(svg: React.RefObject<SVGSVGElement | null>, base: Box, resetKey: string) {
+  const [view, setView] = useState<Box | null>(null);
+  useEffect(() => { setView(null); }, [resetKey]);
+  const vb = view ?? base;
+  const vbRef = useRef(vb); vbRef.current = vb;
+  const baseRef = useRef(base); baseRef.current = base;
+  const pan = useRef<{ sx: number; sy: number; v: Box; id: number; live: boolean } | null>(null);
+  const panned = useRef(false);
+  const zoomAt = (cx: number | null, cy: number | null, f: number): void => {
+    const el = svg.current, v = vbRef.current, b = baseRef.current;
+    if (!el) return;
+    const g = Math.min(Math.max(f, (b.w / 40) / v.w), (b.w * 3) / v.w);
+    let px = v.x + v.w / 2, py = v.y + v.h / 2;
+    const m = el.getScreenCTM();
+    if (cx != null && cy != null && m) { const q = new DOMPoint(cx, cy).matrixTransform(m.inverse()); px = q.x; py = q.y; }
+    setView({ x: px - (px - v.x) * g, y: py - (py - v.y) * g, w: v.w * g, h: v.h * g });
+  };
+  useEffect(() => {
+    const el = svg.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent): void => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(e.deltaY * 0.0015)); };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  });
+  return {
+    vb, zoomed: view != null,
+    viewBox: `${vb.x} ${vb.y} ${vb.w} ${vb.h}`,
+    zoomBy: (f: number): void => zoomAt(null, null, f),
+    fit: (): void => setView(null),
+    down: (e: React.PointerEvent): void => { if (e.button > 1) return; if (e.button === 1) e.preventDefault(); pan.current = { sx: e.clientX, sy: e.clientY, v: vbRef.current, id: e.pointerId, live: false }; },
+    /** true when the move was the pan's */
+    move: (e: React.PointerEvent): boolean => {
+      const p = pan.current, el = svg.current;
+      if (!p || !el) return false;
+      const dx = e.clientX - p.sx, dy = e.clientY - p.sy;
+      if (!p.live && Math.hypot(dx, dy) < 4) return true;
+      if (!p.live) { p.live = true; el.setPointerCapture?.(p.id); }
+      const k = el.getScreenCTM()?.a ?? 1;
+      setView({ ...p.v, x: p.v.x - dx / k, y: p.v.y - dy / k });
+      return true;
+    },
+    up: (): void => { if (pan.current?.live) panned.current = true; pan.current = null; },
+    /** a click that ended a pan is not a click */
+    tookClick: (): boolean => { if (panned.current) { panned.current = false; return true; } return false; },
+  };
+}
+
+function ZoomButtons({ z }: { z: ReturnType<typeof useSvgZoom> }): ReactNode {
+  return <span className="cfdZoom">
+    <button onClick={() => z.zoomBy(1.25)} title="zoom out — the wheel does the same">−</button>
+    <button onClick={() => z.zoomBy(0.8)} title="zoom in — the wheel does the same, about the pointer">+</button>
+    <button className={z.zoomed ? "" : "on"} onClick={z.fit} title="the whole room — drag the drawing's ground to pan">fit</button>
+  </span>;
+}
+
 /** THE PLAN — the view while a room is set up */
 export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: boolean }): ReactNode {
   const [tool, setTool] = useState<"select" | Host | "path">("select");
@@ -118,6 +177,13 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<{ key: string; x: number; z: number } | null>(null);
   const inp = s.inp, ch = s.choices;
+  const box = ((): Box => {
+    const ps = inp ? inp.faces.flatMap((f) => f.outer) : [];
+    if (!ps.length) return { x: 0, y: 0, w: 1, h: 1 };
+    const a = Math.min(...ps.map((p) => p[0])) - 0.6, b = Math.max(...ps.map((p) => p[0])) + 0.6, c = Math.min(...ps.map((p) => p[2])) - 0.6, d = Math.max(...ps.map((p) => p[2])) + 0.6;
+    return { x: a, y: c, w: b - a, h: d - c };
+  })();
+  const zm = useSvgZoom(svg, box, `${inp?.space ?? ""}|${in3d}`);
   if (!inp || !ch) return <div className="cfdPlanEmpty muted">click a space in LEVELS · SPACES to set it up</div>;
   const faces = inp.faces;
   const pts = faces.flatMap((f) => f.outer);
@@ -141,7 +207,7 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
   };
   const add = (host: Host, face: number, c: V3): void => addTerminal(s, faces, host, face, c);
   const click = (e: React.MouseEvent): void => {
-    if (drag.current) return;
+    if (zm.tookClick() || drag.current) return;
     const [x, z] = toPlan(e);
     if (tool === "floor" || tool === "ceiling") {
       // the face under the point: a floor face, or the LOWEST ceiling or roof over it (a stepped ceiling has several)
@@ -203,6 +269,7 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
             {k === "select" ? "select / move" : `+ ${k}`}
           </button>
         ))}
+        {!in3d && <ZoomButtons z={zm} />}
         <span className="muted"> · {s.terminals.filter((t) => t.use).length} terminals in use · drawn to scale</span>
         {inp.offer.enclosure && (() => {
           // THE ROOM ON THE IDF DB MODEL (2026-11-10): its enclosure in idf.db — closed, its volume beside the room the file draws
@@ -217,8 +284,8 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
         })()}
       </div>
       {in3d ? <div className="cfdPlanBody"><CfdSetup3d s={s} imperial={imperial} tool={tool === "select" ? "select" : tool === "path" ? "path" : "add"} /></div> : <div className="cfdPlanBody">
-        <svg ref={svg} viewBox={`${x0} ${z0} ${x1 - x0} ${z1 - z0}`} preserveAspectRatio="xMidYMid meet" className={`cfdPlanSvg tool-${tool}`}
-          onClick={click} onPointerMove={move} onPointerUp={up}>
+        <svg ref={svg} viewBox={zm.viewBox} preserveAspectRatio="xMidYMid meet" className={`cfdPlanSvg tool-${tool}`}
+          onClick={click} onPointerDown={zm.down} onPointerMove={(e) => { if (!zm.move(e)) move(e); }} onPointerUp={() => { zm.up(); up(); }}>
           {/* the floor, the ceilings over it outlined, the walls as the room's edge */}
           {faces.map((f, i) => hostOf(f) === "floor" && <polygon key={`fl${i}`} points={f.outer.map((p) => `${p[0]},${p[2]}`).join(" ")} className="cfdFloor" />)}
           {faces.map((f, i) => hostOf(f) === "ceiling" && <polygon key={`ce${i}`} points={f.outer.map((p) => `${p[0]},${p[2]}`).join(" ")} className="cfdCeil" />)}
@@ -237,7 +304,7 @@ export function CfdSetupPlan({ s, imperial }: { s: CfdSetupState; imperial: bool
               </g>
             );
           })}
-          <g transform={`translate(${x1 - 0.35},${z0 + 0.45})`}><line x1={0} y1={0.25} x2={0} y2={-0.2} className="cfdNorth" /><text x={0} y={-0.25} fontSize={fs} textAnchor="middle" className="cfdPlanText">N</text></g>
+          <g transform={`translate(${zm.vb.x + zm.vb.w - 0.35 * (zm.vb.w / (x1 - x0))},${zm.vb.y + 0.45 * (zm.vb.w / (x1 - x0))}) scale(${zm.vb.w / (x1 - x0)})`}><line x1={0} y1={0.25} x2={0} y2={-0.2} className="cfdNorth" /><text x={0} y={-0.25} fontSize={fs} textAnchor="middle" className="cfdPlanText">N</text></g>
         </svg>
         {wallFace != null && faces[wallFace] && <WallElevation faces={faces} face={wallFace} floorY={floorY} s={s} imperial={imperial} placing={tool === "wall"}
           onPlace={(c, fi) => add("wall", fi, c)} onClose={() => setWallFace(null)} />}
@@ -262,9 +329,10 @@ function WallElevation({ faces, face, floorY, s, imperial, placing, onPlace, onC
   const ring = rings.flatMap((x) => x.r), us = ring.map((q) => q[0]), ys = ring.map((q) => q[1]);
   const inRing = (r: Array<[number, number]>, u: number, y: number): boolean => { let k = false; for (let a = 0, b = r.length - 1; a < r.length; b = a++) { const [ua, ya] = r[a]!, [ub, yb] = r[b]!; if ((ya > y) !== (yb > y) && u < ((ub - ua) * (y - ya)) / (yb - ya) + ua) k = !k; } return k; };
   const u0 = Math.min(...us) - 0.3, u1 = Math.max(...us) + 0.3, y0 = Math.min(...ys) - 0.3, y1 = Math.max(...ys) + 0.3;
+  const zm = useSvgZoom(svg, { x: u0, y: -y1, w: u1 - u0, h: y1 - y0 }, String(face));
   const len = (m: number): string => (imperial ? `${(m / 0.3048).toFixed(1)} ft` : `${m.toFixed(2)} m`);
   const click = (e: React.MouseEvent): void => {
-    if (!placing) return;
+    if (zm.tookClick() || !placing) return;
     const m = svg.current!.getScreenCTM()!.inverse(), p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
     const u = p.x, y = -p.y;
     const hit = rings.find((x) => inRing(x.r, u, y));
@@ -274,8 +342,8 @@ function WallElevation({ faces, face, floorY, s, imperial, placing, onPlace, onC
   const on = s.terminals.filter((q) => q.host === "wall" && set.some((x) => x.i === q.face));
   return (
     <div className="cfdElevation">
-      <div className="cfdPlanTools"><b>{faceLabel(f).replace(/ \(.*/, "")}</b> · {rings.length} face{rings.length === 1 ? "" : "s"} in this plane · seen from inside the room · {placing ? "click where the grille goes" : "pick + wall to add"} <button onClick={onClose}>close</button></div>
-      <svg ref={svg} viewBox={`${u0} ${-y1} ${u1 - u0} ${y1 - y0}`} preserveAspectRatio="xMidYMid meet" className="cfdPlanSvg" onClick={click}>
+      <div className="cfdPlanTools"><b>{faceLabel(f).replace(/ \(.*/, "")}</b> · {rings.length} face{rings.length === 1 ? "" : "s"} in this plane · seen from inside the room · {placing ? "click where the grille goes" : "pick + wall to add"} <ZoomButtons z={zm} /> <button onClick={onClose}>close</button></div>
+      <svg ref={svg} viewBox={zm.viewBox} preserveAspectRatio="xMidYMid meet" className="cfdPlanSvg" onClick={click} onPointerDown={zm.down} onPointerMove={zm.move} onPointerUp={zm.up}>
         {rings.map((x) => <polygon key={x.i} points={x.r.map((q) => `${q[0]},${-q[1]}`).join(" ")} className="cfdFloor" />)}
         <line x1={u0} y1={-floorY} x2={u1} y2={-floorY} className="cfdNorth" />
         {on.map((q) => { const a = uv(q.box.lo), b = uv(q.box.hi), lo: [number, number] = [Math.min(a[0], b[0]), Math.min(a[1], b[1])], hi: [number, number] = [Math.max(a[0], b[0]), Math.max(a[1], b[1])];
