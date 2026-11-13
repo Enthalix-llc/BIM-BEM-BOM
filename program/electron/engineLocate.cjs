@@ -89,14 +89,17 @@ function findEngine(env = process.env) {
 
 /** where a weather file is looked for, in order: the project's Weather/, the engine's WeatherData, every other install's, data/weather/<stem>/ */
 function weatherDirs(repoRoot, engine) {
-  const dirs = [path.join(repoRoot, "Weather")];
+  // a project folder keeps its files in weather/ (2026-11-12); an older home in Weather/ — the same folder on a case-insensitive disk
+  const dirs = [path.join(repoRoot, "weather"), path.join(repoRoot, "Weather")];
   if (engine) {
     dirs.push(path.join(engine.dir, "WeatherData"));
     for (const o of engine.others ?? []) dirs.push(path.join(o.dir, "WeatherData"));
   }
   const dl = path.join(repoRoot, "data", "weather");
   try { for (const d of fs.readdirSync(dl).sort()) dirs.push(path.join(dl, d)); } catch { /* none downloaded */ }
-  return [...new Set(dirs)].filter((d) => fs.existsSync(d));
+  const real = (d) => { try { return fs.realpathSync(d); } catch { return d; } };
+  const seen = new Set();
+  return dirs.filter((d) => fs.existsSync(d)).filter((d) => { const r = real(d).toLowerCase(); if (seen.has(r)) return false; seen.add(r); return true; });
 }
 
 /** a weather file's path as it stands, else the first folder holding a file of its NAME; null when none does */

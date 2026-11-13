@@ -6,6 +6,7 @@
 // proceed button"). Shown once per launch of the app — a page reload in the same window (a merge, a dev reload) does not show it again —
 // over the app, which loads behind it.
 
+import { projectBadge } from "../core/projectSources.js";
 import { useEffect, useState, type ReactNode } from "react";
 
 const SEEN = "bim-splash-seen";
@@ -38,6 +39,7 @@ export function Splash(): ReactNode {
             <path fill="var(--accent-bem)" d="M88,462 Q270,436 450,462 L450,476 Q270,456 92,492 Z" />
           </svg>
           BIM-BEM-BOM
+          {projectBadge() && <span className="houseMark" title={`the open project, ${window.projectNow?.name ?? ""}, carries this mark`}>{projectBadge()}</span>}
         </h1>
         <div className="splashSub">Building Information Model · Building Energy Model · Building Operations Model · where the model meets the meter · by Enthalix LLC · public preview</div>
 

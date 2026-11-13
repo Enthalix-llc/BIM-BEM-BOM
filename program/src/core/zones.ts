@@ -250,8 +250,14 @@ export function applyZoneRulings<T extends { space?: string | null; spaceFacing?
     if (a !== f.space || b !== f.spaceFacing) relabeled++;
     if (a && a === b) internal++;
     // the IfcSpace each side came from survives the relabel: a zone of
-    // several rooms still names each room's own Space (2026-09-04)
-    return { ...f, spaceIfc: f.spaceIfc ?? f.space ?? null, spaceFacingIfc: f.spaceFacingIfc ?? f.spaceFacing ?? null, space: a, spaceFacing: b };
+    // several rooms still names each room's own Space (2026-09-04) — except AN ATTIC MERGED INTO THE ROOM IT STANDS OVER, which
+    // is that room's air and nothing of its own: no Space of its own in the IDF (2026-11-11: an attic over a cathedral room
+    // is the room's volume, not a room of its own). A floor cavity keeps its name: it is never the room's air (isFloorCavity)
+    const own = (z: string | null | undefined, ifc: string | null | undefined): string | null => {
+      const was = ifc ?? z ?? null;
+      return was && isVoidZone(was) && !isFloorCavity(was) && resolve(was) === resolve(roomOfVoidZone(was)) ? roomOfVoidZone(was) : was;
+    };
+    return { ...f, spaceIfc: own(f.space, f.spaceIfc), spaceFacingIfc: own(f.spaceFacing, f.spaceFacingIfc), space: a, spaceFacing: b };
   });
   return { out, report: { relabeled, internal, unresolved: [...new Set(unresolved)] } };
 }

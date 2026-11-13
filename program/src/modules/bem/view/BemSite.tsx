@@ -9,6 +9,8 @@
 // ledger. Nothing is computed for the model on this screen; a distance is
 // a number the user reads.
 
+import { SourcesSection } from "./SourcesSection.js";
+import type { ProjectSources } from "../../../core/projectSources.js";
 import { useEffect, useState } from "react";
 import type { BemModelOutcome } from "../pipeline.js";
 import type { SiteRuling } from "../core/bemDb.js";
@@ -26,8 +28,12 @@ import type { SiteFocus, Located } from "./SiteViews.js";
 
 export interface BemSiteProps {
   model: BemModelOutcome | null;
-  /** the energy code's values saved in Edit values… (2026-10-15): the app reads data/energy-codes/ again and rebuilds the model */
+  /** THE PROJECT'S DATA SOURCES (2026-11-12): its own record (null = the template), the template in force, and Save */
+  sources?: { own: ProjectSources | null; template: ProjectSources; onSave: (next: ProjectSources | null) => void };
+  /** the energy code's values saved in Edit values… (2026-10-15): the app reads the project's code tables again and rebuilds the model */
   onCodesSaved?: () => void;
+  /** the project's code-table folder (its data sources) */
+  codeTables?: string;
   /** the county the location in force falls in, with its state and IECC zone (2026-09-29: the code dialog reads the state) */
   county?: CountyZoneRead | null;
   site: { latitude: number; longitude: number; elevationM: number } | null;
@@ -133,6 +139,9 @@ export function BemSite(p: BemSiteProps): React.ReactElement {
       {/* FOLDED, THE POSITION IS ROLLED UP (user, 2026-10-27: "roll up the lat and lon coordinates when the location bar ... is
           clicked", so a real house can be shown as an example without disclosing where it is): the summary says a position is stated,
           never the numbers; unfolding shows them */}
+      {p.sources && <Fold id="sources" store={STORE} head="data sources — where this project's data comes from" summary={p.sources.own ? "this project's own record" : `the ${p.sources.template.template} template`}>
+        <SourcesSection own={p.sources.own} template={p.sources.template} busy={p.busy} onSave={p.sources.onSave} />
+      </Fold>}
       <Fold id="location" store={STORE} head="location — the IfcSite" summary={p.site ? `position stated${stage.location ? " · located on the map" : ""} — unfold to show` : "not stated"}>
         <KV k="site" src="file" v={p.site ? `lat ${p.site.latitude.toFixed(4)} · lon ${p.site.longitude.toFixed(4)}` : "not stated"} />
         <KV k="project elev" src="file" title="the project's elevation is set by its lowest occupied level (elevators and shafts are not occupied space — the user's rule); the IfcSite's own RefElevation is shown beside it; the weather station's elevation is its own, under the weather file"
@@ -170,7 +179,7 @@ export function BemSite(p: BemSiteProps): React.ReactElement {
           );
         })()}
         {codeEdit && (() => { const cur = typeof stage.energyCode === "string" ? { adoption: stage.energyCode } : stage.energyCode; const r = resolveCode(cur?.adoption ?? null);
-          return <EnergyCodeEditor zone={cur?.climateZone ?? p.county?.zone ?? null} edition={r.edition.id === "none" ? null : r.edition.id} imperial={p.imperial}
+          return <EnergyCodeEditor tables={p.codeTables ?? "tables/energy-codes"} zone={cur?.climateZone ?? p.county?.zone ?? null} edition={r.edition.id === "none" ? null : r.edition.id} imperial={p.imperial}
             onSaved={() => { setCodeEdit(false); p.onCodesSaved?.(); }} onCancel={() => setCodeEdit(false)} />; })()}
         {codeOpen && <EnergyCodeDialog state={p.county?.state || null} county={p.county?.county || null} zone={p.county?.zone || null} imperial={p.imperial}
           current={typeof stage.energyCode === "string" ? { adoption: stage.energyCode } : stage.energyCode}

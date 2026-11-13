@@ -36,9 +36,8 @@ The simplest way is in the app: BEM › SITE › energy code › **Choose…** �
 writes these files for you, one climate zone's row at a time, and keeps the
 file it replaces beside it as a `.bak`. To edit the files directly instead:
 
-1. Create the folder `data/energy-codes/` in the repository and copy the four
-   CSV files from this folder into it. `data/` holds your own files and is never
-   committed.
+1. Create the folder `tables/energy-codes/` in your project's folder and copy the four
+   CSV files from this folder into it.
 2. In `editions.csv`, add one row for each code edition you use, for example
    `IECC-2021,2021 IECC,IECC-2021,International Code Council,,<the page you read>,<date>,<what you read>`.
 3. In `values.csv`, add one row for each edition, zone and factor (see the

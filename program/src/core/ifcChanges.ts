@@ -273,6 +273,8 @@ export function carryRulings(prev: FileIndex, next: FileIndex, diff: FileDiff, o
     // the gains (2026-09-13): a room's ruling rides on the room's name, a drawn zone's on the zone's (a name the sheet gives, not the file)
     for (const name of Object.keys(b.gains?.rooms ?? {})) { const r = nameCase([name]); cases.push({ id: `bem:gains.rooms:${name}`, ledger: "bem", kind: "room gains", label: name, ...r }); }
     for (const name of Object.keys(b.gains?.zones ?? {})) cases.push({ id: `bem:gains.zones:${name}`, ledger: "bem", kind: "zone gains", label: name, subjects: [`zone ${name}`], verdict: "carried", why: "" });
+    // a transfer-air path (2026-11-11) rides on its three rooms' names
+    (b.gains?.transfers ?? []).forEach((t, i) => { const r = nameCase([t.from, t.via, t.to]); cases.push({ id: `bem:gains.transfers:${i}`, ledger: "bem", kind: "transfer air", label: `${t.from} → ${t.via} → ${t.to}`, ...r }); });
     if (b.weather) cases.push({ id: "bem:weather", ledger: "bem", kind: "weather file", label: b.weather.epw.split(/[\\/]/).pop() ?? b.weather.epw, subjects: ["the site"], verdict: "carried", why: "" });
     if (b.site && Object.keys(b.site).length) cases.push({ id: "bem:site", ledger: "bem", kind: "site settings", label: Object.keys(b.site).join(", "), subjects: ["the site"], verdict: "carried", why: "" });
     if (b.ground) cases.push({ id: "bem:ground", ledger: "bem", kind: "ground coupling", label: b.ground.method ?? "the slab insulation", subjects: ["the floors"], verdict: "carried", why: "" });
@@ -308,7 +310,7 @@ export function carryRulings(prev: FileIndex, next: FileIndex, diff: FileDiff, o
     let bem: BemLedger | null = null;
     if (b) {
       bem = { ...b, sourceIfcSha256: next.sha, savedAt: at, constructions: Object.fromEntries(Object.entries(b.constructions ?? {}).filter(([k]) => on(`bem:constructions:${k}`))), zones: Object.fromEntries(Object.entries(b.zones ?? {}).filter(([k]) => on(`bem:zones:${k}`))), carriedFrom: record };
-      if (b.gains) { const rooms = Object.fromEntries(Object.entries(b.gains.rooms ?? {}).filter(([k]) => on(`bem:gains.rooms:${k}`))); const g = { ...(b.gains.zones ? { zones: b.gains.zones } : {}), ...(Object.keys(rooms).length ? { rooms } : {}) }; if (Object.keys(g).length) bem.gains = g; else delete bem.gains; }
+      if (b.gains) { const rooms = Object.fromEntries(Object.entries(b.gains.rooms ?? {}).filter(([k]) => on(`bem:gains.rooms:${k}`))); const transfers = (b.gains.transfers ?? []).filter((_, i) => on(`bem:gains.transfers:${i}`)); const g = { ...(b.gains.zones ? { zones: b.gains.zones } : {}), ...(Object.keys(rooms).length ? { rooms } : {}), ...(transfers.length ? { transfers } : {}) }; if (Object.keys(g).length) bem.gains = g; else delete bem.gains; }
     }
     const bom = old.bom && typeof old.bom === "object" ? { ...(old.bom as Record<string, unknown>), sourceIfcSha256: next.sha } : null;
     // the labels a new element carries: re-keyed subjects are named by the NEW file

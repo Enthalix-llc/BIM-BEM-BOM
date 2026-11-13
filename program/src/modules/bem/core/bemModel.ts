@@ -36,6 +36,7 @@ import { resolveSystems } from "./bemSystems.js";
 import { isConditioned } from "./bemIdf.js";
 import { modelChecks, type CheckRow } from "./modelChecks.js";
 import { resolveGains, gainRulingCount, bedroomMarksOf } from "./bemGains.js";
+import { resolveTransfers, transfersInWords } from "./transferAir.js";
 import { estimateGroundTemps, groundInputsFromAir, ftToM, GEOKISS } from "./groundTemp.js";
 
 export interface BemSetting { key: string; value: string; source: Source }
@@ -376,6 +377,9 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
   // THE GAINS (2026-09-13): People, Lights and ElectricEquipment per room — the cited residential defaults, the zone's and the
   // room's rulings on top (bemGains.ts); a zone's conditioning as the systems read it
   const gains = resolveGains(input, ledger?.gains, library, { conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), schedules: sched.map });
+  // TRANSFER AIR THROUGH A VOID (2026-11-11): the paths ruled on ZONES, checked against the rooms as the gains read them (their
+  // zone after the sheet's merge, conditioned, occupied) — written as ZoneMixing, a refusal named on ZONES
+  const transfers = resolveTransfers(ledger?.gains?.transfers, gains.rooms.map((r) => ({ room: r.room, zone: r.zone, conditioned: r.conditioned, people: r.people.count })));
   // THE SYSTEMS (2026-09-10): the rulings per subsection resolved against the engine's schema; a zone's conditioning
   // by the ZONES ledger, else by its name; local exhaust waits on the SCHEDULES ventilation role
   const sys = resolveSystems(ledger?.systems, input, { schema, datasets: library?.objects ?? [], conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), ventilationScheduled: sched.map.has("ventilation"), bedroomMarks: bedroomMarksOf(ledger?.gains),
@@ -529,6 +533,7 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
     // THE VOID RULINGS (user, 2026-09-18): which plane carries the insulation over each void the app built. An unruled void keeps
     // the DEFAULT is inside the envelope (2026-09-20); `make-a-void` and `shade` answer a geometry question and write nothing
     { key: "voids_ruled", value: voidRulings.size ? [...voidRulings].map(([z, r]) => `${z}: ${r.answer === "roof" ? "insulation at the roof" : r.answer === "ceiling" ? "insulation at the ceiling (a vented attic)" : r.answer === "not-a-space" ? "part of the floor assembly" : r.answer}${r.grille ? " · a transfer grille into conditioned space" : ""}`).join(" · ") : "none ruled — every void is INSIDE the envelope (the project's ruling: all roofs are insulated, so any void under one is interior): the roof over it carries the insulation, the ceiling under it is interior drywall", source: voidRulings.size ? "user" : "code-default" },
+    { key: "transfer_air", value: `${transfersInWords(transfers)}${transfers.unresolved.length ? ` · not written: ${transfers.unresolved.length}` : ""}`, source: ledger?.gains?.transfers?.length ? "user" : "code-default" },
     { key: "gains_ruled", value: String(gainRulingCount(ledger?.gains)), source: gainRulingCount(ledger?.gains) ? "user" : "code-default" },
     { key: "gains_people", value: `${gains.rooms.reduce((t, r) => t + r.people.count, 0).toFixed(2)} over ${gains.rooms.filter((r) => r.people.count > 0).length} rooms — ${gains.nocc.toFixed(2)} for ${gains.nbr} bedrooms by name, by floor share of ${gains.cfaM2.toFixed(1)} m² (BAHSP 2014 §4.6 Eq. 23)`, source: gains.rooms.some((r) => r.people.source === "user") ? "user" : "dataset" },
     { key: "gains_lights_w", value: `${gains.rooms.reduce((t, r) => t + r.lights.wattsW, 0).toFixed(0)} W — the file's fixtures ${gains.rooms.filter((r) => r.lights.source === "file").length} rooms, the example's W/m² ${gains.rooms.filter((r) => r.lights.source === "dataset").length}${gains.exterior ? ` · exterior ${gains.exterior.wattsW.toFixed(0)} W (${gains.exterior.stated} fixtures in no room)` : ""}`, source: gains.rooms.some((r) => r.lights.source === "user") ? "user" : gains.rooms.some((r) => r.lights.source === "file") ? "file" : "dataset" },
@@ -544,8 +549,8 @@ export function buildModel(rawInput: BemInput, ledger: BemLedger | null, weather
   // THE CHECKS (the user, 2026-10-06): the questions asked of every build, answered from what it resolved
   const checks = modelChecks({ drawn, nodes: ledger?.systems?.assembly?.nodes ?? [], sys, gains, conditioned: (z) => ledger?.zones?.[z]?.conditioned ?? isConditioned(z), plumbing: dhw, approvals: ledger?.sideApprovals, pv: elecSheet ? { refused: pv?.refused ?? [], arrays: elecSheet.arrayCards } : null,
     unresolved: [{ where: "ZONES", items: unresolvedZones }, { where: "CONSTRUCTIONS", items: cons.unresolved }, { where: "SCHEDULES", items: sched.unresolved },
-      { where: "SYSTEMS", items: sys.unresolved.filter((x) => !x.startsWith("PLUMBING: ")) }, { where: "ZONES › gains", items: gains.unresolved }] });
-  return { checks, model: { ...base, climateZone: countyZone?.zone || undefined, energyCode: codeId, zones, site, constructions: cons.map, ...(doorGlass.size ? { doorGlass } : {}), ...(vegetated.size ? { vegetated } : {}), ground: ledger?.ground, schedules: sched.map, holidays: projectHolidayDays(ledger).length ? projectHolidayDays(ledger) : undefined, systems: sys, systemSchedules, gains, shading: input.siteElements, pv, voidRulings, ...(tariff?.card.charges ? { tariff } : {}), ...(meters.length ? { meters } : {}) }, input, settings, unresolvedZones, unresolvedConstructions: cons.unresolved, unresolvedSchedules: sched.unresolved, unresolvedSystems: sys.unresolved, unresolvedGains: gains.unresolved };
+      { where: "SYSTEMS", items: sys.unresolved.filter((x) => !x.startsWith("PLUMBING: ")) }, { where: "ZONES › gains", items: gains.unresolved }, { where: "ZONES › transfer air", items: transfers.unresolved }] });
+  return { checks, model: { ...base, climateZone: countyZone?.zone || undefined, energyCode: codeId, zones, site, constructions: cons.map, ...(doorGlass.size ? { doorGlass } : {}), ...(vegetated.size ? { vegetated } : {}), ground: ledger?.ground, schedules: sched.map, holidays: projectHolidayDays(ledger).length ? projectHolidayDays(ledger) : undefined, systems: sys, systemSchedules, gains, ...(transfers.mixing.length ? { transfers: transfers.mixing } : {}), shading: input.siteElements, pv, voidRulings, ...(tariff?.card.charges ? { tariff } : {}), ...(meters.length ? { meters } : {}) }, input, settings, unresolvedZones, unresolvedConstructions: cons.unresolved, unresolvedSchedules: sched.unresolved, unresolvedSystems: sys.unresolved, unresolvedGains: [...gains.unresolved, ...transfers.unresolved] };
 }
 
 /** the model the user asked for (2026-09-03): the 2018 IRC climate-zone-4

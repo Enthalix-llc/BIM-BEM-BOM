@@ -4,7 +4,7 @@
 // requirements) as per year of reference (current with past issues listed — for example 'applicable for 6/2018 to 6/2021')"): the
 // project's state from the county lookup, the CLIMATE ZONE the user reads for the county in the code's own table, a permit
 // (application) date that decides which of the state's adoptions applies, the model codes below them, and what the pick changes in
-// this zone before it is staged. The codes and their values are the user's own tables (data/energy-codes/): no code table ships
+// this zone before it is staged. The codes and their values are the user's own tables (tables/energy-codes/): no code table ships
 // with the program. Nothing is assumed: a state with no adoption on record says so, and with no table at all the dialog says how to
 // enter one.
 
@@ -83,7 +83,7 @@ export function EnergyCodeDialog(p: {
         {noTables && <div className="bad" style={{ margin: "6px 0 10px" }}>
           No energy code is on record. BIM-BEM-BOM ships no code tables: a code is its publisher's. Read the code your project is under — the
           IECC is free to read (read-only) at <a href={ZONE_TABLE_URL} target="_blank" rel="noreferrer">codes.iccsafe.org</a> — and enter
-          its values in <code>data/energy-codes/</code>; the empty templates and how to fill them are in <code>references/energy-codes/README.md</code>.
+          its values with <b>Edit values…</b> (kept in the project's <code>tables/energy-codes/</code>); the empty templates and how to fill them are in <code>references/energy-codes/README.md</code>.
           The app reads them when it starts.
         </div>}
         <div className="allRow">
@@ -109,7 +109,7 @@ export function EnergyCodeDialog(p: {
                 <td>{a.sourceUrl ? <a href={a.sourceUrl} target="_blank" rel="noreferrer">read {a.readOn}</a> : "—"}</td>
               </tr>
             ))}
-            {p.state && rows.length === 0 && <tr><td /><td colSpan={5} className="bad">no adoption of {p.state}'s is on record in data/energy-codes — choose a model code below, or add the state's rows</td></tr>}
+            {p.state && rows.length === 0 && <tr><td /><td colSpan={5} className="bad">no adoption of {p.state}'s is on record in the project's code tables — choose a model code below, or add the state's rows</td></tr>}
             {p.state && rows.length > 0 && !inForce && okDate && <tr><td /><td colSpan={5} className="bad">none of {p.state}'s adoptions on record was in force on {md(date)}</td></tr>}
             <tr className="grp"><td colSpan={6}>model codes, as published — not a state's law; for a study or a comparison</td></tr>
             {ownEditions.map((e) => editionRow(e))}

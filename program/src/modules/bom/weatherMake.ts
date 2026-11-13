@@ -13,6 +13,7 @@
 import { parseGhcnh, parseOpenMeteo, makeAmyEpw, OPEN_METEO_HOURLY, type AmyCounts } from "../bem/core/amyEpw.js";
 import { DEFAULT_EPW, distanceKm } from "../bem/core/weather.js";
 import { parseCsv } from "./core/csvRead.js";
+import type { AmyStation } from "../../core/projectSources.js";
 
 /** NOAA's GHCNh station list (CC0): id, position, elevation, state, name, WMO and ICAO ids */
 export const GHCNH_STATIONS_URL = "https://www.ncei.noaa.gov/oa/global-historical-climatology-network/hourly/doc/ghcnh-station-list.csv";
@@ -39,10 +40,12 @@ export function latestEnd(today = new Date()): string {
   return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - ARCHIVE_LAG_DAYS * 86_400_000).toISOString().slice(0, 10);
 }
 
-/** the file's name: the station, the period, the sources */
-export const amyStem = (stationId: string, start: string, end: string): string => `GHCNh-${stationId}_AMY_${start}_${end}_OpenMeteo`;
+/** the file's name: the station, the period, the sources — or, when the project's data sources pin a station with a name for its
+ *  files (2026-11-12), that name, the period and the sources */
+export const amyStem = (stationId: string, start: string, end: string, fileStem?: string): string =>
+  fileStem ? `${fileStem}_AMY_${start}_${end}_GHCNh-OpenMeteo` : `GHCNh-${stationId}_AMY_${start}_${end}_OpenMeteo`;
 
-export async function makeActualWeather(o: { start: string; end: string; lat: number; lon: number; template?: string; onProgress?: (s: string) => void }): Promise<{ epw: string; name: string; counts: AmyCounts; ddy: boolean; station: GhcnhStation } | { error: string }> {
+export async function makeActualWeather(o: { start: string; end: string; lat: number; lon: number; template?: string; station?: AmyStation; onProgress?: (s: string) => void }): Promise<{ epw: string; name: string; counts: AmyCounts; ddy: boolean; station: GhcnhStation } | { error: string }> {
   const say = o.onProgress ?? (() => {});
   if (!/^\d{4}-\d{2}-\d{2}$/.test(o.start) || !/^\d{4}-\d{2}-\d{2}$/.test(o.end) || o.end < o.start) return { error: `the period ${o.start} – ${o.end} is not a period` };
   if (o.end > latestEnd()) return { error: `the archive reaches ${latestEnd()} — the period must end by then` };
@@ -54,7 +57,12 @@ export async function makeActualWeather(o: { start: string; end: string; lat: nu
   say("NOAA's station list …");
   const list = await window.bem.fetchCached(GHCNH_STATIONS_URL, "weather/ghcnh-station-list.csv", 30);
   if ("error" in list) return { error: `NOAA's station list: ${list.error}` };
-  const candidates = nearestGhcnh(list.text, o.lat, o.lon);
+  // THE STATION THE PROJECT'S DATA SOURCES NAME (2026-11-12): pinned by its GHCNh id — the one tried, its distance read from the list —
+  // or the nearest that report hourly, tried in turn
+  const pinned = o.station?.mode === "pinned" ? o.station : null;
+  const candidates = pinned
+    ? [nearestGhcnh(list.text, o.lat, o.lon, 20000, 100000).find((x) => x.id === pinned.id) ?? { id: pinned.id, name: pinned.name ?? pinned.id, latitude: NaN, longitude: NaN, km: NaN }]
+    : nearestGhcnh(list.text, o.lat, o.lon);
   if (!candidates.length) return { error: "no NOAA station reporting hourly lies within 150 km of the site — use your own actual-year file" };
   const y0 = Number(o.start.slice(0, 4)) - (o.start.slice(5) === "01-01" ? 1 : 0), y1 = Number(o.end.slice(0, 4)) + (o.end.slice(5) === "12-31" ? 1 : 0);
   const thisYear = new Date().getUTCFullYear();
@@ -89,7 +97,7 @@ export async function makeActualWeather(o: { start: string; end: string; lat: nu
     out = makeAmyEpw({ template, station, grid: parseOpenMeteo(j), start: o.start, end: o.end, site: { lat: o.lat, lon: o.lon },
       gridAt: j.latitude !== undefined ? { lat: j.latitude, lon: j.longitude!, elevationM: j.elevation ?? null } : null });
   } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
-  const name = amyStem(used.id, o.start, o.end);
+  const name = amyStem(used.id, o.start, o.end, pinned?.fileStem);
   const saved = await window.bem.saveWeather(name, out.epw, tplPath.replace(/\.epw$/i, ".ddy"));
   if ("error" in saved) return { error: saved.error };
   return { epw: saved.epw, name: `${name}.epw`, counts: out.counts, ddy: saved.ddy, station: used };

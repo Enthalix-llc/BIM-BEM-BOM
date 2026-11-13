@@ -13,12 +13,14 @@ import { srcClass, fmtTemp, LensPicker, NumInput, InfoTip } from "./bemUi.js";
 import { zoneColor } from "./SystemsAssembly.js";
 import { ZoneSides } from "./ComponentSettings.js";
 import { ieccFor } from "../core/bemIdf.js";
-import { INFIL_FIELD, COEFF_SOURCE, ELA, elaCm2, type InfilMethod } from "../core/infiltration.js";
+import { INFIL_FIELD, INFIL_ROW_FIELD, COEFF_SOURCE, ELA, elaCm2, type InfilMethod, type InfilTable } from "../core/infiltration.js";
 import type { AsmNode } from "../core/assembly.js";
+import type { TransferPath } from "../core/transferAir.js";
+import { TransferAir } from "./TransferAir.js";
 
 /** THE ZONE'S INFILTRATION (user, 2026-10-08: "build it into Zones"): the code's rate until typed, a constant ACH (the garage's
  *  door openings), or the blower-door ACH50 — written as the engine's effective leakage area, driven by the weather each hour */
-function ZoneInfiltration(p: { node: AsmNode; volumeM3: number | null; codeAch: number; codeAch50: number; codeLabel: string; onPatch: (f: (n: AsmNode) => AsmNode) => void }): React.ReactElement {
+function ZoneInfiltration(p: { node: AsmNode; volumeM3: number | null; codeAch: number; codeAch50: number; codeLabel: string; onPatch: (f: (n: AsmNode) => AsmNode) => void; table?: InfilTable | null }): React.ReactElement {
   const f = p.node.fields ?? {};
   const method: InfilMethod = f[INFIL_FIELD.method] === "ach" || f[INFIL_FIELD.method] === "ach50" ? (f[INFIL_FIELD.method] as InfilMethod) : "code";
   const num = (k: string): number | null => (typeof f[k] === "number" ? (f[k] as number) : null);
@@ -47,6 +49,15 @@ function ZoneInfiltration(p: { node: AsmNode; volumeM3: number | null; codeAch: 
       </>}
       {method === "ach50" && <>
         <NumInput className={ach50 === null ? "src-code" : "src-user"} value={ach50} placeholder={String(p.codeAch50)} onValue={(v) => set({ [INFIL_FIELD.ach50]: v ?? undefined })} digits={2} min={0} title="air changes an hour at 50 Pa — the blower-door test's number (the code's limit until tested)" /> ACH50
+        {p.table && (() => {
+          // A TABLE THE PROJECT NAMES (2026-11-12): storeys and shelter pick its row and FILL Cs and Cw — the numbers stay the card's
+          const t = p.table, st = String(num(INFIL_ROW_FIELD.stories) ?? ""), sh = String(num(INFIL_ROW_FIELD.shelter) ?? "");
+          const fill = (stories: string, shelter: string): void => { const cs2 = t.stack[stories], cw2 = t.wind[shelter]?.[stories]; set({ [INFIL_ROW_FIELD.stories]: Number(stories) || undefined, [INFIL_ROW_FIELD.shelter]: Number(shelter) || undefined, ...(cs2 !== undefined && cw2 !== undefined ? { [INFIL_FIELD.cs]: cs2, [INFIL_FIELD.cw]: cw2 } : {}) }); };
+          return <>
+            <label title={`the storeys the house's air column spans — the stack coefficient's row (${t.cite})`}>storeys <select value={st} onChange={(e) => fill(e.target.value, sh)} onClick={(e) => e.stopPropagation()}><option value="">—</option>{Object.keys(t.stack).map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+            <label title={`the wind's shielding (${t.cite})${sh && t.shelterWords?.[sh] ? ` — ${t.shelterWords[sh]}` : ""}`}>shelter <select value={sh} onChange={(e) => fill(st, e.target.value)} onClick={(e) => e.stopPropagation()}><option value="">—</option>{Object.keys(t.wind).map((n) => <option key={n} value={n} title={t.shelterWords?.[n]}>{n}</option>)}</select></label>
+          </>;
+        })()}
         <label title={`the stack coefficient, (L/s)²/(cm⁴·K) — EnergyPlus requires it and has no default: ${COEFF_SOURCE}`}>Cs <NumInput className={cs === null ? "bad" : "src-user"} value={cs} onValue={(v) => set({ [INFIL_FIELD.cs]: v ?? undefined })} digits={6} min={0} /></label>
         <label title={`the wind coefficient, (L/s)²/(cm⁴·(m/s)²) — by the house's storeys and its shelter: ${COEFF_SOURCE}`}>Cw <NumInput className={cw === null ? "bad" : "src-user"} value={cw} onValue={(v) => set({ [INFIL_FIELD.cw]: v ?? undefined })} digits={6} min={0} /></label>
         <InfoTip text={`ZoneInfiltration:EffectiveLeakageArea — the flow each hour = A × √(Cs·ΔT + Cw·U²): the indoor-outdoor ΔT drives the stack, the wind the rest, so a mild calm hour leaks little and a cold windy one more. A, the effective leakage area at ${ELA.refPa} Pa, from the ACH50 and the zone's volume (ASHRAE Fundamentals ch. 16, n ${ELA.n}, C_D ${ELA.cd}): 0.354 cm² per cfm50. Cs and Cw as typed — ${COEFF_SOURCE}. Until both are typed the model is not written.`} />
@@ -57,6 +68,8 @@ function ZoneInfiltration(p: { node: AsmNode; volumeM3: number | null; codeAch: 
 }
 
 export function BemZones(p: { model: BemModelOutcome | null; selectedZone: string | null; onZone: (z: string | null) => void; imperial: boolean;
+  /** a Cs/Cw table the project's data sources name (2026-11-12) — fills the Zone card's coefficients */
+  infilTable?: InfilTable | null;
   lens: Lens; legend: Legend | null; hasRun: boolean; onLens: (l: Lens) => void;
   /** the SYSTEMS assembly's components and the zones' assignment to them (user, 2026-09-10: zones are assigned here, not drawn on the sheet) */
   assembly: Assembly; assign: ZoneAssign; onAssign: (zone: string, ids: string[]) => void; pending: number; onApply: () => void; onRevert: () => void; busy: boolean;
@@ -67,7 +80,9 @@ export function BemZones(p: { model: BemModelOutcome | null; selectedZone: strin
   /** THE FRAME'S SUBJECT (2026-09-13): a room's name under a zone's card selects it; the gains staged in the frame apply here */
   selectedSpace: string | null; onSpace: (room: string, zone: string) => void; gainPending: number; onApplyGains: () => void; onRevertGains: () => void;
   /** A ROOM IS A BEDROOM (the user, 2026-10-07): the tick, as staged with the gains (Apply gains saves it); the one place it is said */
-  isBedroom: (room: string) => boolean; onBedroom: (room: string, on: boolean) => void }): React.ReactElement {
+  isBedroom: (room: string) => boolean; onBedroom: (room: string, on: boolean) => void;
+  /** TRANSFER AIR THROUGH A VOID (2026-11-11): the paths as staged with the gains, and a room's design air flow from the last run */
+  transfers: TransferPath[]; onTransfers: (t: TransferPath[]) => void; designFlow?: (room: string) => { heating: number; cooling: number } | null }): React.ReactElement {
   const m = p.model;
   const tempIn = (c: number | undefined, dflt: number): number => Number(((p.imperial ? (c ?? dflt) * 9 / 5 + 32 : c ?? dflt)).toFixed(1));
   const heldBy = p.compiled.roomZone;
@@ -137,7 +152,7 @@ export function BemZones(p: { model: BemModelOutcome | null; selectedZone: strin
                   {node && <ZoneSides node={node} feeder={unit} imperial={p.imperial} compact onPatch={(f) => p.onAssembly(patchNode(p.assembly, z.id, f))} />}
                   <span className="muted">the code's thermostat {fmtTemp(code.heatingSetpointC, p.imperial, 0)} / {fmtTemp(code.coolingSetpointC, p.imperial, 0)} until typed · a side unchecked is put out of reach so nothing calls for it</span>
                 </div>}
-                {node && <ZoneInfiltration node={node} volumeM3={m.zones.find((q) => q.name === z.name)?.volumeM3 ?? null} codeAch={code.ach50 / 20} codeAch50={code.ach50} codeLabel={`${code.ach50} ACH50 (${code.edition.label}) ÷ 20, every hour the same`} onPatch={(f) => p.onAssembly(patchNode(p.assembly, z.id, f))} />}
+                {node && <ZoneInfiltration node={node} volumeM3={m.zones.find((q) => q.name === z.name)?.volumeM3 ?? null} codeAch={code.ach50 / 20} codeAch50={code.ach50} codeLabel={`${code.ach50} ACH50 (${code.edition.label}) ÷ 20, every hour the same`} onPatch={(f) => p.onAssembly(patchNode(p.assembly, z.id, f))}  table={p.infilTable} />}
                 {refused.length > 0 && <div className="src-warn">refused: {refused.join(" · ")}</div>}
                 {sideOff.length > 0 && <div className="src-warn">⚠ {sideOff.join(" · ")}</div>}
               </div>
@@ -145,6 +160,7 @@ export function BemZones(p: { model: BemModelOutcome | null; selectedZone: strin
           })}
         </div>
       )}
+      <TransferAir rooms={m.rooms} paths={p.transfers} onPaths={p.onTransfers} imperial={p.imperial} designFlow={p.designFlow} />
       <div className="qaPanel">
         <table>
           <thead><tr><th>zone</th><th>kind</th><th>volume</th><th>cond.</th><th title="the SAVED model's heating setpoint — it changes when the sheet is saved and the model rebuilt; the zone's card above is where it is typed">saved heat</th><th title="the SAVED model's cooling setpoint — it changes on Save">saved cool</th><th>infil ACH</th><th>system</th>{fans.length > 0 && <th>exhaust</th>}</tr></thead>

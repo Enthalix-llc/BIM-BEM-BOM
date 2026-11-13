@@ -2,7 +2,7 @@
 // Copyright 2026 Enthalix LLC
 // THE ENERGY CODES (user, 2026-09-29: "we need a table to track all code related factors per issuance"): the residential code's
 // values by edition and climate zone, and a state's adoptions with the dates they applied — THE USER'S OWN, read at start from
-// data/energy-codes/ (ENERGY_CODE_FILES; the empty templates and how to fill them: references/energy-codes/). No code table ships with
+// tables/energy-codes/ (ENERGY_CODE_FILES; the empty templates and how to fill them: references/energy-codes/). No code table ships with
 // the program: a code is its publisher's, free to read (read-only) at codes.iccsafe.org, and the user enters the values their project
 // is under. Pure: no I/O. A value without a unit or a citation is refused; an empty value is the code's "NR", never a number invented;
 // a factor with no value on record reads NaN and is named in `missing` — the writer refuses a model that needs it.
@@ -168,7 +168,7 @@ export function adoptionsFor(state: string | null | undefined, date: string, dat
 /** WHAT THE WRITER NEEDS AND THE USER HAS NOT ENTERED — null when the code's row is complete. Said in words the user can act on */
 export function energyCodeGap(t: { missing: string[]; edition: Edition; row: string }): string | null {
   if (!t.missing.length) return null;
-  const where = "BEM › SITE › energy code › Choose… › Edit values… (kept in data/energy-codes/)";
+  const where = "BEM › SITE › energy code › Choose… › Edit values… (kept in the project's tables/energy-codes/)";
   const words: Record<string, string> = { fenestrationU: "window U", skylightU: "skylight U", ceilingU: "ceiling U", frameWallU: "frame wall U", massWallU: "mass wall U", floorU: "floor U",
     basementWallU: "basement wall U", crawlWallU: "crawl space wall U", fenestrationSHGC: "window SHGC", slabR: "slab R", slabDepthFt: "slab depth", ach50: "air leakage (ACH50)",
     heatingSetpointC: "heating thermostat", coolingSetpointC: "cooling thermostat" };

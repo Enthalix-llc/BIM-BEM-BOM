@@ -78,7 +78,7 @@ report non-convex surfaces as Severe errors).
 ## 2. A building
 
 Use BIM › Open IFC… to open an IFC file. To try the program, open the sample
-building `samples/Duplex_A_20110907.ifc` (see `samples/README.md` for its source
+building `examples/Duplex/Duplex_A_20110907.ifc` (see `examples/Duplex/README.md` for its source
 and licence).
 
 BIM-BEM-BOM reads the rooms (IfcSpace), the walls, slabs, roofs, windows and doors,
@@ -109,7 +109,7 @@ project is under as the code states it, enter its values:
    [codes.iccsafe.org](https://codes.iccsafe.org/).
 2. In BEM › SITE › energy code, click **Choose…**, then **Edit values…**. Give the code an id
    and a name, pick your climate zone's row, and enter each value with the
-   table or section it is from. Save writes `data/energy-codes/`; the CSV
+   table or section it is from. Save writes the project's `tables/energy-codes/`; the CSV
    format is in `references/energy-codes/README.md`, if you prefer to edit
    the files directly.
 3. Click **Choose…**, choose the edition, enter the climate zone that your
@@ -121,8 +121,8 @@ values that are missing.
 
 ## 5. Costs and calibration (optional)
 
-- **Tariff:** copy `references/tariffs/tariff.template.json` to
-  `data/tariffs/tariff.json` and fill it in from your utility's published rate
+- **Tariff:** copy `references/tariffs/tariff.template.json` to the project's
+  `tables/tariffs/tariff.json` and fill it in from your utility's published rate
   schedule (`references/tariffs/README.md`).
 - **Bills and PV:** type your bills in BOM, or import them as CSV, and import
   your PV system's daily production as CSV.
@@ -164,10 +164,15 @@ of the OPENFOAM® and OpenCFD® trade marks.
 
 ## Where your files are
 
+**A project is a folder** you choose (by default `Documents/BIM-BEM-BOM Projects/<name>`). It holds everything the
+project uses: `project.sqlite` (its rulings and history), `ifc/` (the IFC files, copied in), `weather/`, `tables/`,
+`library/`, `cache/`, `imports/` and `data/` (the derived databases and runs). Copy the folder and the project is
+complete. **Open IFC…** on a file outside a project starts a new one. **New project…** makes one from a template, and
+**Save as template…** makes a template of your own from a project. The shipped template is in `templates/standard/`
+and the sample in `examples/Duplex/` (see `templates/README.md`).
+
 | What | Where |
 | --- | --- |
-| Projects and your decisions | `projects.sqlite` in the app-data folder: `~/Library/Application Support/Enthalix/` on macOS, `%APPDATA%\Enthalix\` on Windows, `~/.config/Enthalix/` on Linux |
-| Models, runs and your own tables | `data/` in the repository, never committed; in an installed BIM-BEM-BOM, `data/` in the app-data folder |
-| Weather files | `Weather/` in the repository, never committed; in an installed BIM-BEM-BOM, `Weather/` in the app-data folder |
-| All of these, elsewhere | set `ENTHALIX_HOME` to a folder, and BIM-BEM-BOM keeps `projects.sqlite`, `data/` and `Weather/` there |
-| Settings | `data/settings.json`, for example `{ "geocoderUrl": "https://…/search" }` to use another Nominatim-compatible geocoder |
+| Settings and the window's own storage | the app-data folder: `~/Library/Application Support/Enthalix/` on macOS, `%APPDATA%\Enthalix\` on Windows, `~/.config/Enthalix/` on Linux — `settings.json` names the default template, the projects folder and recent projects; `{ "geocoderUrl": "https://…/search" }` there uses another Nominatim-compatible geocoder |
+| Your templates | `templates/` in the app-data folder |
+| All of these, elsewhere | set `ENTHALIX_HOME` to a folder |

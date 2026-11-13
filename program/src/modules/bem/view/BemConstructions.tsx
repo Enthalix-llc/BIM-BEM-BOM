@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { sanitizeIdfName, codeCatalogue, catalogueKindOf, CODE_VT, ROOF_SHADE_REASON, ieccFor } from "../core/bemIdf.js";
 import type { BemModelOutcome } from "../pipeline.js";
 import type { BemLedger, ConstructionRuling, ConsSource, GroundRuling } from "../core/bemDb.js";
-import { cFactor, slabPlan, slabFactors, groundMethodOf, DEFAULT_GROUND_METHOD, F_TABLE_CITE, C_TABLE_CITE } from "../core/groundCoupling.js";
+import { cFactor, slabPlan, slabFactors, groundMethodOf, DEFAULT_GROUND_METHOD, F_TABLE_CITE, C_TABLE_CITE , fFromTable, cFromTable, type GroundTable } from "../core/groundCoupling.js";
 import type { Library } from "../core/idfLib.js";
 import { windowNote } from "../core/idfLib.js";
 import { TYPE_SECTIONS, SECTION_TITLES, type TypeRow, type TypeSection } from "../constructionTypes.js";
@@ -49,6 +49,8 @@ export function BemConstructions(p: {
   stage: Record<string, ConstructionRuling>; onStage: (key: string, r: ConstructionRuling | undefined) => void; onRevert: () => void;
   /** the ground-coupling method as staged (slice 4): plain Ground, the F/C-factor method, or Kiva */
   ground: GroundRuling | undefined; onGround: (g: GroundRuling | undefined) => void;
+  /** an F/C table the project's data sources name (2026-11-12) — fills the F and C */
+  groundTable?: GroundTable | null;
   onApply: (constructions: Record<string, ConstructionRuling>, ground: GroundRuling | undefined) => void; busy: boolean;
   /** the selected type (section|name) — a row click selects it: its cells light, the DETAIL pane and the options read it */
   selected: string | null; onSelect: (key: string | null) => void;
@@ -265,6 +267,12 @@ export function BemConstructions(p: {
                       <span>F-factor</span><NumInput className={`numIn ${p.ground?.fIp !== undefined ? "src-user" : "bad"}`} digits={3} value={p.ground?.fIp ?? null} onValue={(v) => setGround({ fIp: v === null ? undefined : v })} title="the slab's F-factor, Btu/h·ft·°F, from ASHRAE 90.1 Table A6.3.1" />
                       <span>Btu/h·ft·°F · C-factor</span><NumInput className={`numIn ${p.ground?.cIp !== undefined ? "src-user" : "bad"}`} digits={3} value={p.ground?.cIp ?? null} onValue={(v) => setGround({ cIp: v === null ? undefined : v })} title="the below-grade walls' C-factor, Btu/h·ft²·°F, from ASHRAE 90.1 Table A4.2.1" />
                       <span>Btu/h·ft²·°F</span> <InfoTip text={`${F_TABLE_CITE}. ${C_TABLE_CITE}. As typed: F ${sfx.placed.entry}, C ${cF.entry}.`} />
+                      {p.groundTable && (() => {
+                        // A TABLE THE PROJECT NAMES (2026-11-12): its rows for this slab and these walls FILL the two numbers — still the user's
+                        const t = p.groundTable, f = fFromTable(t, sp.r, sp.distM, sp.extent === "full" ? "full" : "horizontal"), c = cFromTable(t, p.ground?.wallR ?? 10);
+                        return <button className="qaBtn" title={`${t.fCite} · ${t.cCite} — the rows at or under this slab's R and distance and the walls' R, never interpolated`}
+                          onClick={() => setGround({ fIp: f.ip, ...(c ? { cIp: c.ip } : {}) })}>from the table: F {f.ip} ({f.entry}){c ? ` · C ${c.ip} (${c.entry})` : ""}</button>;
+                      })()}
                     </div>}
                     <div className="idfInfo muted">{gMethod === "kiva" ? (sp.extent === "edge" ? `EnergyPlus: Foundation:Kiva interior horizontal XPS R-${sp.r}, ${+lenAt(sp.distM).toFixed(2)} ${p.imperial ? "ft" : "m"} in from the wall's inside face, right under the slab; the slab concrete alone; the walls' own constructions (insulated inside); the engine's own soil` : `EnergyPlus: Foundation:Kiva, the R-${sp.r} as a layer under the whole slab in its construction; the walls' own constructions`) : gMethod === "fcfactor" ? `EnergyPlus: Construction:FfactorGroundFloor at F ${sfx.placed.ip} (the placement's row) and CfactorUndergroundWall at C ${cF.ip}; the exposed perimeter read from the model` : sp.extent === "edge" ? "EnergyPlus: a constant ground temperature — the edge strip is NOT modelled; the slab is concrete alone" : `EnergyPlus: a constant ground temperature, R-${sp.r} under the full slab`}</div>
                     {p.groundFacts && <GroundFacts g={p.groundFacts.g} label={p.groundFacts.label} imperial={p.imperial} />}

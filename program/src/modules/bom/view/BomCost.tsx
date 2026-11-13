@@ -17,6 +17,7 @@ import type { AmyCounts } from "../../bem/core/amyEpw.js";
 import { groupSubtotals, statementTotal, statementMonth, type Statement } from "../core/statement.js";
 import { equivalentWithoutPv, type BillNoPv } from "../core/calibration.js";
 import { makeActualWeather, latestEnd } from "../weatherMake.js";
+import type { AmyStation } from "../../../core/projectSources.js";
 
 export type BomRail = "UTILITY" | "WEATHER" | "BILLS";
 export const BOM_RAILS: BomRail[] = ["UTILITY", "WEATHER", "BILLS"];
@@ -493,7 +494,7 @@ export function TariffDetails({ card, ledger, onApply, onRemove, busy, billedPca
 
 /** THE WEATHER CARD'S COLUMN (2026-10-07): the actual weather for the bills' period — or any period the archive reaches — made in the app
  *  from NOAA's station hours and Open-Meteo's sun and sky, saved into Weather/; picked on BEM › SITE like any file, never applied here */
-export function WeatherMaker({ bills, site, template }: { bills: BillRow[]; site: { latitude: number; longitude: number } | null; template?: string }): ReactNode {
+export function WeatherMaker({ bills, site, template, station }: { bills: BillRow[]; site: { latitude: number; longitude: number } | null; template?: string; station?: AmyStation }): ReactNode {
   const span = bills.length ? { a: bills.reduce((m, b) => (b.periodStart < m ? b.periodStart : m), bills[0]!.periodStart), b: bills.reduce((m, b) => (b.periodEnd > m ? b.periodEnd : m), bills[0]!.periodEnd) } : null;
   // without bills: the last twelve whole months the archive reaches
   const last = latestEnd(), lastMonthEnd = new Date(Date.UTC(Number(last.slice(0, 4)), Number(last.slice(5, 7)) - 1, 0)).toISOString().slice(0, 10);
@@ -506,12 +507,12 @@ export function WeatherMaker({ bills, site, template }: { bills: BillRow[]; site
   const go = async (): Promise<void> => {
     if (!site) return;
     setBusy(true); setDone(null);
-    const r = await makeActualWeather({ start, end, lat: Number(site.latitude.toFixed(4)), lon: Number(site.longitude.toFixed(4)), template, onProgress: setSay });
+    const r = await makeActualWeather({ start, end, lat: Number(site.latitude.toFixed(4)), lon: Number(site.longitude.toFixed(4)), template, station, onProgress: setSay });
     setDone(r); setBusy(false); setSay("");
   };
   return (
     <>
-      <div className="idfInfo">The weather the bills were metered under: NOAA NCEI's hourly readings at the reporting station nearest the site (GHCNh, CC0, no key) and the Open-Meteo archive's sun, sky and rain at the site's own position (no key; Weather data by Open-Meteo.com, CC BY 4.0 — its free API is for non-commercial use only) — gaps of 6 h or less drawn by a line, longer ones from the archive, every filled hour counted in the file. The archive reaches {last}.</div>
+      <div className="idfInfo">The weather the bills were metered under: NOAA NCEI's hourly readings at {station?.mode === "pinned" ? `station ${station.name ?? station.id} (${station.id}), pinned by the project's data sources` : "the reporting station nearest the site"} (GHCNh, CC0, no key) and the Open-Meteo archive's sun, sky and rain at the site's own position (no key; Weather data by Open-Meteo.com, CC BY 4.0 — its free API is for non-commercial use only) — gaps of 6 h or less drawn by a line, longer ones from the archive, every filled hour counted in the file. The archive reaches {last}.</div>
       {span && <div className="idfInfo">your bills run {span.a} – {span.b}{span.b > last ? ` — the archive does not reach ${span.b} yet` : ""}</div>}
       <table className="pvFields"><tbody>
         <tr><td>from</td><td><input type="date" value={start} max={end} onChange={(e) => setStart(e.target.value)} /></td></tr>
@@ -524,7 +525,7 @@ export function WeatherMaker({ bills, site, template }: { bills: BillRow[]; site
       {done && "error" in done && <div className="src-warn">{done.error}</div>}
       {done && !("error" in done) && (
         <>
-          <div className="idfInfo src-user">saved: {done.name}{done.station ? ` · NOAA station ${done.station.name} (${done.station.id}), ${done.station.km.toFixed(0)} km from the site` : ""}{done.ddy ? " (the design days copied beside it)" : ""} — pick it on BEM › SITE › weather file, Apply, and Run; the comparison then reads the run's own dates</div>
+          <div className="idfInfo src-user">saved: {done.name}{done.station ? ` · NOAA station ${done.station.name} (${done.station.id}), ${Number.isFinite(done.station.km) ? `${done.station.km.toFixed(0)} km from the site` : "pinned by the project's data sources"}` : ""}{done.ddy ? " (the design days copied beside it)" : ""} — pick it on BEM › SITE › weather file, Apply, and Run; the comparison then reads the run's own dates</div>
           {Object.entries(done.counts.fields).map(([k, c]) => <div key={k} className="idfInfo">{k}: {c.station} h the station · {c.line} h a line · {c.grid} h the archive · {c.missing} h missing</div>)}
         </>
       )}

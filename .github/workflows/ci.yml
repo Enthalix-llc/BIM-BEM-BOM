@@ -42,9 +42,9 @@ jobs:
       - name: The sample is the published file, byte for byte
         working-directory: .
         run: |
-          want=$(sed -n 's/.*SHA-256:\*\*[[:space:]]*`\([0-9a-f]\{64\}\)`.*/\1/p' samples/README.md)
-          if command -v sha256sum > /dev/null; then got=$(sha256sum samples/Duplex_A_20110907.ifc | cut -d' ' -f1)
-          else got=$(shasum -a 256 samples/Duplex_A_20110907.ifc | cut -d' ' -f1); fi
+          want=$(sed -n 's/.*SHA-256:\*\*[[:space:]]*`\([0-9a-f]\{64\}\)`.*/\1/p' examples/Duplex/README.md)
+          if command -v sha256sum > /dev/null; then got=$(sha256sum examples/Duplex/Duplex_A_20110907.ifc | cut -d' ' -f1)
+          else got=$(shasum -a 256 examples/Duplex/Duplex_A_20110907.ifc | cut -d' ' -f1); fi
           echo "published $want"; echo "checkout  $got"
           test "$want" = "$got"
 

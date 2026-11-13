@@ -54,7 +54,7 @@ function findApp() {
 }
 
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-const publishedSha = () => /SHA-256:\*\*\s*`([0-9a-f]{64})`/.exec(fs.readFileSync(path.join(REPO, "samples", "README.md"), "utf8"))?.[1] ?? null;
+const publishedSha = () => /SHA-256:\*\*\s*`([0-9a-f]{64})`/.exec(fs.readFileSync(path.join(REPO, "examples", "Duplex", "README.md"), "utf8"))?.[1] ?? null;
 
 /** the page's DevTools socket, once the window has loaded */
 async function pageSocket(deadline) {
@@ -109,10 +109,10 @@ async function main() {
   const result = { platform: `${process.platform}-${process.arch}`, ok: false };
   const app = findApp();
   if (!app) { result.error = "no built app found — run pnpm dist (or electron-builder --dir) first, or pass --app"; return finish(out, result); }
-  const ifc = path.join(app.resources, "samples", "Duplex_A_20110907.ifc");
+  const ifc = path.join(app.resources, "examples", "Duplex", "Duplex_A_20110907.ifc");
   result.app = app.exe;
   // the repository's sample and the bundled one must both be the published file, byte for byte (line endings included)
-  result.sample = { published: publishedSha(), repo: sha256(path.join(REPO, "samples", "Duplex_A_20110907.ifc")), bundled: fs.existsSync(ifc) ? sha256(ifc) : null };
+  result.sample = { published: publishedSha(), repo: sha256(path.join(REPO, "examples", "Duplex", "Duplex_A_20110907.ifc")), bundled: fs.existsSync(ifc) ? sha256(ifc) : null };
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "enthalix-smoke-"));
   // Linux in CI has no display or GPU: Chromium's own software GL (SwiftShader) draws the 3D view there, where WebGL2 is otherwise blocked
   const args = [`--remote-debugging-port=${PORT}`, ...(process.platform === "linux" ? ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] : [])];
@@ -157,7 +157,7 @@ async function main() {
     result.shadingFallback = noGpu;
     const severeOk = result.severe === 0 || (noGpu && onlyNonConvex);
     result.ok = !!m && result.fatal === 0 && severeOk && s.published === s.repo && s.repo === s.bundled;
-    if (m && !result.ok && s.published !== s.repo) result.error = "the sample's SHA-256 differs from samples/README.md (line endings rewritten?)";
+    if (m && !result.ok && s.published !== s.repo) result.error = "the sample's SHA-256 differs from examples/Duplex/README.md (line endings rewritten?)";
   } catch (e) {
     result.error = e instanceof Error ? e.message : String(e);
   } finally {

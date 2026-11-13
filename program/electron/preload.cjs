@@ -1,6 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Enthalix LLC
 const { contextBridge, ipcRenderer } = require("electron");
+// THE PROJECT IN FORCE (2026-11-12, a project is a folder): read once, synchronously, before the page's first render — opening another
+// project reloads the page
+contextBridge.exposeInMainWorld("projectNow", ipcRenderer.sendSync("project:current-sync"));
+contextBridge.exposeInMainWorld("projectFolder", {
+  current: () => ipcRenderer.invoke("project:current"),
+  templates: () => ipcRenderer.invoke("project:templates"),
+  recent: () => ipcRenderer.invoke("project:recent"),
+  ofIfc: (p) => ipcRenderer.invoke("project:of-ifc", p),
+  pickFolder: (title, defaultPath) => ipcRenderer.invoke("project:pick-folder", title, defaultPath),
+  create: (o) => ipcRenderer.invoke("project:create", o),
+  open: (dir) => ipcRenderer.invoke("project:open", dir),
+  addIfcs: (files) => ipcRenderer.invoke("project:add-ifcs", files),
+  setOpenIfc: (p) => ipcRenderer.invoke("project:set-open-ifc", p),
+  setSources: (json) => ipcRenderer.invoke("project:set-sources", json),
+  saveTemplate: (name, asDefault) => ipcRenderer.invoke("project:save-template", name, asDefault),
+  setDefaultTemplate: (t) => ipcRenderer.invoke("project:set-default-template", t),
+  examples: () => ipcRenderer.invoke("project:examples"),
+  example: (name) => ipcRenderer.invoke("project:example", name),
+  reveal: () => ipcRenderer.invoke("project:reveal"),
+});
 contextBridge.exposeInMainWorld("bim", {
   openIfc: () => ipcRenderer.invoke("bim:open-ifc"),
   saveDb: (name, bytes) => ipcRenderer.invoke("bim:save-db", name, bytes),
@@ -14,9 +34,10 @@ contextBridge.exposeInMainWorld("bim", {
 // the BEM module: the contract file, the weather, its ledger, the engine
 contextBridge.exposeInMainWorld("bem", {
   readDataFile: (rel) => ipcRenderer.invoke("bem:read-data-file", rel),
+  readHomeFile: (rel) => ipcRenderer.invoke("app:read-home-file", rel),
   readText: (p) => ipcRenderer.invoke("bem:read-text", p),
   readReference: (rel) => ipcRenderer.invoke("bem:read-reference", rel),
-  saveEnergyCodes: (files) => ipcRenderer.invoke("bem:save-energy-codes", files),
+  saveEnergyCodes: (files, rel) => ipcRenderer.invoke("bem:save-energy-codes", files, rel),
   exists: (p) => ipcRenderer.invoke("bem:exists", p),
   pickEpw: () => ipcRenderer.invoke("bem:pick-epw"),
   loadDecisions: (sha) => ipcRenderer.invoke("bem:load-decisions", sha),

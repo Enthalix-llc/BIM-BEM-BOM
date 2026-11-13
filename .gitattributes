@@ -2,7 +2,7 @@
 # so a Windows clone reads the same bytes as macOS and Linux.
 * text=auto eol=lf
 
-# Model and weather files are read byte for byte: the sample IFC's SHA-256 is its identity (samples/README.md),
+# Model and weather files are read byte for byte: the sample IFC's SHA-256 is its identity (examples/Duplex/README.md),
 # so git never rewrites their line ends.
 *.ifc -text
 *.epw -text

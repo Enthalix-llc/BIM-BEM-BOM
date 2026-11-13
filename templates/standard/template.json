@@ -1,0 +1,29 @@
+{
+  "name": "standard",
+  "sources": {
+    "template": "standard",
+    "weatherListing": "energyplus",
+    "amyStation": {
+      "mode": "nearest"
+    },
+    "energyCodes": {
+      "shipped": true
+    },
+    "climateZone": {
+      "mode": "typed"
+    },
+    "infiltration": {
+      "mode": "typed"
+    },
+    "groundFactors": {
+      "mode": "typed"
+    },
+    "referenceLists": [],
+    "tariffs": {
+      "sample": true,
+      "files": [
+        "tables/tariffs/tariff.json"
+      ]
+    }
+  }
+}

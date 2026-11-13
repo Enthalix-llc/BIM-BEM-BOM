@@ -52,8 +52,29 @@ interface CorrectionsLedger {
 }
 
 /** a save or a backup, as the main process reports it (2026-09-23): a failure is shown on every tab until dismissed */
+/** the project in force: its folder, name, the template it started from, its data-sources record and the IFC it last had open */
+interface ProjectNow { dir: string; name: string; template: string | null; sources: unknown; openIfc: string | null }
 interface SaveStatus { kind: "save" | "backup"; ok: boolean; what?: string; error?: string; committed?: boolean; pushed?: boolean; at: string }
 interface Window {
+  /** THE PROJECT IN FORCE (2026-11-12, a project is a folder): read at the page's start; null when none is open */
+  projectNow: ProjectNow | null;
+  projectFolder: {
+    current(): Promise<ProjectNow | null>;
+    templates(): Promise<{ templates: Array<{ id: string; name: string; shipped: boolean; sources: unknown }>; defaultTemplate: string | null; projectsDir: string }>;
+    recent(): Promise<Array<{ dir: string; name: string }>>;
+    ofIfc(p: string): Promise<string | null>;
+    pickFolder(title: string, defaultPath?: string): Promise<string | null>;
+    create(o: { dir: string; name: string; template: string | null; ifcs: string[] }): Promise<ProjectNow | null>;
+    open(dir: string | null): Promise<ProjectNow | null>;
+    addIfcs(files: string[]): Promise<string[]>;
+    setOpenIfc(p: string): Promise<boolean>;
+    setSources(json: unknown): Promise<ProjectNow | null>;
+    saveTemplate(name: string, asDefault: boolean): Promise<string>;
+    setDefaultTemplate(t: string | null): Promise<boolean>;
+    examples(): Promise<Array<{ name: string; ifcs: string[] }>>;
+    example(name: string): Promise<{ dir: string; ifcs: string[] }>;
+    reveal(): Promise<boolean>;
+  };
   /** the Explain help in a window of its own (2026-10-15); absent → the dialog inside the page */
   explainWin?: { show(title: string, html: string): Promise<{ ok: boolean }>; hide(): Promise<{ ok: boolean }> };
   appStatus: { onSaveStatus(cb: (s: SaveStatus) => void): () => void };
@@ -75,8 +96,10 @@ interface Window {
   /** the BEM module's bridge: the contract file, the weather, its ledger, the engine */
   bem: {
     readDataFile(rel: string): Promise<Uint8Array | null>;
-    /** data/energy-codes/<name>.csv written (the previous kept as .bak); the paths written */
-    saveEnergyCodes(files: Partial<Record<"editions.csv" | "values.csv" | "state-adoptions.csv" | "state-overrides.csv", string>>): Promise<string[]>;
+    /** a file a data source names, read from the home folder only (a table, a reference list, a tariff card); null when absent */
+    readHomeFile(rel: string): Promise<string | null>;
+    /** <project>/<rel>/<name>.csv written (rel: the folder the project's sources name; the previous kept as .bak); the paths written */
+    saveEnergyCodes(files: Partial<Record<"editions.csv" | "values.csv" | "state-adoptions.csv" | "state-overrides.csv", string>>, rel: string): Promise<string[]>;
     readText(path: string): Promise<string | null>;
     /** a text file under references/ — the user's reference lists (references/materials/*.csv, 2026-09-16); null outside it or absent */
     readReference(rel: string): Promise<string | null>;

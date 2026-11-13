@@ -34,9 +34,9 @@ export type { Source, Sourced } from "./bemIdf.js";
 /** THE BEM LEDGER: the user's decisions about one IFC, keyed to its sha —
  *  never to idf.db's bytes, which change on every rebuild */
 /** THE ENERGY CODE (user, 2026-09-16): the code whose prescriptive tables the code default reads — an edition or a state's adoption from
- *  the user's own tables (data/energy-codes/). The climate zone is the user's reading of their county's row in the code's table */
+ *  the user's own tables (tables/energy-codes/). The climate zone is the user's reading of their county's row in the code's table */
 export type EnergyCodeId = string;
-/** THE CODE CONFIRMED (user, 2026-09-29): an edition ("IECC-2021") or a state's adoption from the user's tables (data/energy-codes/),
+/** THE CODE CONFIRMED (user, 2026-09-29): an edition ("IECC-2021") or a state's adoption from the user's tables (tables/energy-codes/),
  *  the permit (application) date that decides which adoption applies, the climate zone the user read for the county ("4A"), and when
  *  the user confirmed it */
 export interface EnergyCodeRuling { adoption: EnergyCodeId; referenceDate?: string; confirmedAt?: string; climateZone?: string }
@@ -276,6 +276,7 @@ export interface GainEquipmentRow { id: string; name: string; wattsW?: number; w
   /** the equipment group the row belongs to (2026-10-03); absent = the example's own row's group, else "other" */
   group?: EquipmentGroup }
 export type EquipmentGroup = "cooking" | "refrigeration" | "dishwasher" | "laundry" | "charging" | "entertainment" | "work" | "other";
+import type { TransferPath } from "./transferAir.js";
 export interface GainRuling {
   people?: { count?: number; perAreaM2?: number; activityW?: number; fractionRadiant?: number; none?: true };
   lights?: { wattsW?: number; wm2?: number; fixtures?: true; none?: true };
@@ -285,7 +286,8 @@ export interface GainRuling {
    *  hot-water use all count these */
   bedroom?: boolean;
 }
-export interface GainRulings { zones?: Record<string, GainRuling>; rooms?: Record<string, GainRuling> }
+/** `transfers` (2026-11-11): the transfer-air paths through a void — room → void → room at the expected air balance (transferAir.ts) */
+export interface GainRulings { zones?: Record<string, GainRuling>; rooms?: Record<string, GainRuling>; transfers?: TransferPath[] }
 export interface BemLedger {
   sourceIfcSha256: string;
   savedAt: string;

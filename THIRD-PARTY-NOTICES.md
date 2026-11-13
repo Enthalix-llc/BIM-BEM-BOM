@@ -146,4 +146,4 @@ affected row's tooltip.
 
 | File | Source | Licence |
 | --- | --- | --- |
-| `samples/Duplex_A_20110907.ifc` | The "Duplex Apartment" model, from the [buildingSMART community sample files](https://github.com/buildingsmart-community/Community-Sample-Test-Files), commit `7ddf57a`. Included unmodified. | © the original authors, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `examples/Duplex/Duplex_A_20110907.ifc` | The "Duplex Apartment" model, from the [buildingSMART community sample files](https://github.com/buildingsmart-community/Community-Sample-Test-Files), commit `7ddf57a`. Included unmodified. | © the original authors, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |

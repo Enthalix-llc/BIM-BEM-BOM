@@ -50,37 +50,24 @@ try {
   }
 } catch (err) { note("EnergyPlus", `could not be looked for: ${err instanceof Error ? err.message : String(err)}`); }
 
-// 3. Weather — a typical-year file for the site
-const weatherDir = path.join(repo, "Weather");
-const epws = fs.existsSync(weatherDir) ? fs.readdirSync(weatherDir).filter((f) => /\.epw$/i.test(f)) : [];
-if (epws.length) ok("weather", `${epws.length} file${epws.length === 1 ? "" : "s"} in Weather/`);
-else note("weather", "no file in Weather/ yet — the app opens on a placeholder (Golden, CO, from EnergyPlus's own WeatherData)",
-  "pick your site's file on the map in BEM › SITE (EnergyPlus's weather repository, https://energyplus.net/weather), or put a .epw with its .ddy in Weather/");
+// 3. Projects (2026-11-12): a project is a folder holding its own weather, tables, library and IFCs — made from a template
+const std = path.join(repo, "templates", "standard", "template.json");
+if (fs.existsSync(std)) ok("template", "templates/standard — the template a new project is made from (New project… or Open IFC… on a file outside a project)");
+else need("template", "templates/standard/template.json is missing — a new project cannot be made", "the repository's templates/ folder");
 
-// 4. The energy code — the DOE/PNNL prototype values ship with the program (2026-10-15); the user's own tables, where present, come first
-const codes = path.join(repo, "data", "energy-codes");
-const eds = csvRows(path.join(codes, "editions.csv")), vals = csvRows(path.join(codes, "values.csv"));
+// 4. The energy code — the DOE/PNNL prototype values ship with the program (2026-10-15); a project's own tables, where present, come first
 const shipped = csvRows(path.join(program, "src", "modules", "bem", "reference", "pnnl-values.csv"));
-if (eds && vals) ok("energy code", `${eds} edition${eds === 1 ? "" : "s"}, ${vals} value${vals === 1 ? "" : "s"} of your own in data/energy-codes/, before the shipped DOE/PNNL values`);
-else if (shipped) ok("energy code", `the DOE/PNNL prototype values for IECC 2006–2024 ship with the program (${shipped} values); enter your own code's in BEM › SITE › energy code › Choose… › Edit values…`);
+if (shipped) ok("energy code", `the DOE/PNNL prototype values for IECC 2006–2024 ship with the program (${shipped} values); a project's own code goes in its tables/energy-codes (BEM › SITE › energy code › Choose… › Edit values…)`);
 else need("energy code", "no code values on record — the model is not written without them",
   "enter your code's values in BEM › SITE › energy code › Choose… › Edit values… (references/energy-codes/README.md)");
 
-// 5. The tariff — optional, for costs
-const tariff = path.join(repo, "data", "tariffs", "tariff.json");
-if (fs.existsSync(tariff)) {
-  let inForce = 0;
-  try { inForce = (JSON.parse(fs.readFileSync(tariff, "utf8")).cards ?? []).filter((c) => c.status === "in force").length; } catch { /* reported below */ }
-  if (inForce) ok("tariff", `${inForce} card${inForce === 1 ? "" : "s"} in force in data/tariffs/tariff.json`);
-  else note("tariff", "data/tariffs/tariff.json has no card marked \"in force\"", "references/tariffs/README.md");
-} else note("tariff", "none of your own — the shipped Sample residential card prices the run until you apply your utility's (BOM › tariff › Search…)", "references/tariffs/README.md");
+// 5. The weather and the tariff are the project's: its file picked on BEM › SITE (EnergyPlus's weather repository) lands in its weather/;
+//    the Sample card prices the run until the project's own tariff (tables/tariffs/tariff.json) is applied
+note("weather", "each project keeps its own weather/ — pick the site's file on the map in BEM › SITE (https://energyplus.net/weather)");
 
 // 6. A building
-const ifcDir = path.join(repo, "references", "ifc");
-const ifcs = fs.existsSync(ifcDir) ? fs.readdirSync(ifcDir).filter((f) => /\.ifc$/i.test(f)) : [];
-if (ifcs.length) ok("building", `${ifcs.length} IFC file${ifcs.length === 1 ? "" : "s"} in references/ifc/`);
-else if (fs.existsSync(path.join(repo, "samples", "Duplex_A_20110907.ifc"))) ok("building", "the sample samples/Duplex_A_20110907.ifc — open it, or any IFC, from BIM › Open IFC…");
-else note("building", "no IFC file in references/ifc/ — open any IFC from the app (BIM › Open IFC…)", "a sample building: see SETUP.md");
+if (fs.existsSync(path.join(repo, "examples", "Duplex", "Duplex_A_20110907.ifc"))) ok("building", "the example examples/Duplex — Open IFC… › New project from the example Duplex…, or any IFC of your own");
+else note("building", "open any IFC from the app (Open IFC…) — it starts a new project", "a sample building: see SETUP.md");
 
 // 7. Terms to know before paid work
 note("terms", "the actual-year weather's sun and sky come from the Open-Meteo archive, whose free API is for NON-COMMERCIAL use only — for paid work use your own actual-year file (BOM › calibration)");

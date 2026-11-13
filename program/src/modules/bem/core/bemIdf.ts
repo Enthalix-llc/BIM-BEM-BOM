@@ -34,6 +34,7 @@ import { wallPlanes, exposedEdges, perimeterOf, cFactor, groundDefaultsFor, slab
 import type { PlacedOpening } from "../../../core/placeOpenings.js";
 import { envelopeOpenings, roofShadePolys, type OpeningAccount } from "./envelopeOpenings.js";
 import { isVoidZone } from "../../../core/zones.js";
+import type { ZoneMixingOut } from "./transferAir.js";
 import type { ResolvedGains } from "./bemGains.js";
 import { codeFor, type IeccRow, type IeccTable, energyCodeGap } from "./energyCodes.js";
 import { isTree, isDeciduous, DECIDUOUS_TRANSMITTANCE, LEAF_ON_TRANSMITTANCE } from "../../../core/shadingSchedule.js";
@@ -242,6 +243,8 @@ export interface IdfWriteReport {
     sizing: { zones: number; spaces: number };
     /** every zone's Spaces as written — one per IfcSpace the zone's surfaces came from */
     spacesByZone: Record<string, string[]>;
+    /** ZoneMixing objects written for transfer air through a void (2026-11-11) */
+    transferAir?: number;
   };
   /** THE VOID RULINGS AS WRITTEN (2026-09-18): the voids the user put inside the envelope, the roofs and ceilings that changed
    *  because of it, and the answers that write NOTHING here because they are geometry — carried and named, never silent */
@@ -478,6 +481,8 @@ export interface IdfModel {
   systemSchedules?: Array<{ profile: ScheduleProfile }>;
   /** the internal gains per room (2026-09-13): People, Lights, ElectricEquipment on every room's Space; unset = none written */
   gains?: ResolvedGains;
+  /** TRANSFER AIR THROUGH A VOID (2026-11-11): one ZoneMixing per receiving/source zone pair, the flows of the paths summed */
+  transfers?: ZoneMixingOut[];
   /** THE VOID RULINGS (user, 2026-09-18): per void, WHICH PLANE CARRIES THE INSULATION — the file does not say, and the
    *  answer decides the whole envelope there. Unset, or a void with no ruling, the void is INSIDE the envelope: the roof
    *  over it carries the insulation and the ceiling under it is interior drywall (the project's ruling, 2026-09-20). The
@@ -1450,6 +1455,14 @@ export function writeIdf(
       if (ela) { obj("ZoneInfiltration:EffectiveLeakageArea", name(`${z} infiltration`), zoneEp.get(z)!, infil, ela.cm2.toFixed(1), String(ela.cs), String(ela.cw)); continue; }
       obj("ZoneInfiltration:DesignFlowRate", name(`${z} infiltration`), zoneEp.get(z)!, infil, "AirChanges/Hour", "", "", "",
         achOf(z).toFixed(3), "1", "0", "0", "0");
+    }
+    // TRANSFER AIR THROUGH A VOID (2026-11-11): the engine's one-way exchange into the receiving zone, every hour (Delta
+    // Temperature 0 = full mixing, ZoneEquipmentManager.cc), at the expected air balance the user typed
+    for (const m of model.transfers ?? []) {
+      const zr = zoneEp.get(m.zone), zs = zoneEp.get(m.source);
+      if (!zr || !zs) continue;
+      obj("ZoneMixing", name(m.name), zr, always, "Flow/Zone", m.m3s.toFixed(6), "", "", "", zs, "0");
+      report.model.transferAir = (report.model.transferAir ?? 0) + 1;
     }
     obj("Site:GroundTemperature:BuildingSurface", ...site$.groundTempsC.map((v) => v.toFixed(2).replace(/\.?0+$/, "")));
     if (gm === "fcfactor") obj("Site:GroundTemperature:FCfactorMethod", ...(site$.fcfactorGroundTempsC ?? Array(12).fill(13)).map((v: number) => v.toFixed(2).replace(/\.?0+$/, "")));

@@ -44,7 +44,7 @@ the BOM, then an actual house. <https://youtu.be/MwWHeHbkUAE> (10/30/26)
 
 See [SETUP.md](SETUP.md). In short: install Node.js, pnpm and EnergyPlus 26.1,
 then run `pnpm install` and `pnpm dev` in `program/`, and open the sample
-building in [`samples/`](samples/). To see what is installed and what is
+building in [`examples/Duplex/`](examples/Duplex/). To see what is installed and what is
 missing, run `pnpm setup:check`. For room airflow (CFD), also install OpenFOAM
 separately; it is optional, and SETUP.md § 6 says how.
 

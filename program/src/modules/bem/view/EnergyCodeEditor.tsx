@@ -2,22 +2,23 @@
 // Copyright 2026 Enthalix LLC
 // THE ENERGY CODE'S VALUES, TYPED (user, 2026-10-15): SITE › energy code › Edit values… — the code's name and source, then one climate
 // zone's row of the values the model is built from, each with the place in the code it was read (the citation). Written to the user's
-// own data/energy-codes/*.csv (energyCodeEdit.ts), the file replaced kept beside it; read again at once, and the model rebuilt.
+// own code tables (the project's tables/energy-codes/*.csv by default) (energyCodeEdit.ts), the file replaced kept beside it; read again at once, and the model rebuilt.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ENERGY_CODE_DATA, ENERGY_CODE_FILES, PNNL_NOTICE } from "../core/energyCodes.js";
+import { ENERGY_CODE_DATA, PNNL_NOTICE } from "../core/energyCodes.js";
 import { FACTOR_DEFS, entriesOf, entryProblems, missingOf, recsOf, shownOf, shownUnit, storedOf, withEdits, type Entry, type Rec } from "../core/energyCodeEdit.js";
 import { ZONE_TABLE_URL } from "../../../core/climateZone.js";
 
 const ZONE_ROWS = ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 const NEW = "__new__";
-const dec = (b: Uint8Array | null): string => (b ? new TextDecoder().decode(b) : "");
 
-export function EnergyCodeEditor(p: { zone: string | null; edition: string | null; imperial: boolean; onSaved: () => void; onCancel: () => void }): React.ReactElement {
+export function EnergyCodeEditor(p: { zone: string | null; edition: string | null; imperial: boolean; onSaved: () => void; onCancel: () => void;
+  /** the project's code-table folder (its data sources; tables/energy-codes by default) */
+  tables: string }): React.ReactElement {
   const [csv, setCsv] = useState<{ editions: string; values: string } | null>(null);
   useEffect(() => {
-    void Promise.all([window.bem.readDataFile(ENERGY_CODE_FILES.editions), window.bem.readDataFile(ENERGY_CODE_FILES.values)])
-      .then(([e, v]) => setCsv({ editions: dec(e), values: dec(v) }));
+    void Promise.all([window.bem.readHomeFile(`${p.tables}/editions.csv`), window.bem.readHomeFile(`${p.tables}/values.csv`)])
+      .then(([e, v]) => setCsv({ editions: e ?? "", values: v ?? "" }));
   }, []);
   const editions = useMemo(() => (csv ? recsOf(csv.editions) : []), [csv]);
   const values = useMemo(() => (csv ? recsOf(csv.values) : []), [csv]);
@@ -70,7 +71,7 @@ export function EnergyCodeEditor(p: { zone: string | null; edition: string | nul
     setSaving(true); setError(null);
     try {
       const next = withEdits(csv, { ...ed, label: ed.label!.trim() }, zoneRow, entries);
-      await window.bem.saveEnergyCodes({ "editions.csv": next.editions, "values.csv": next.values });
+      await window.bem.saveEnergyCodes({ "editions.csv": next.editions, "values.csv": next.values }, p.tables);
       p.onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setSaving(false); }
   };
@@ -85,9 +86,9 @@ export function EnergyCodeEditor(p: { zone: string | null; edition: string | nul
           The model's default constructions, its infiltration and the reference thermostat are built from these values. BIM-BEM-BOM ships the DOE/PNNL
           prototype values by IECC edition (read only here); to use the code your project is under as the code states it, read it (the IECC is free
           to read, read-only, at <a href={ZONE_TABLE_URL} target="_blank" rel="noreferrer">codes.iccsafe.org</a>) and enter its values as a code of your
-          own, with the table or section each is from — or copy a prototype edition and change what differs. Saved to <code>data/energy-codes/</code>.
+          own, with the table or section each is from — or copy a prototype edition and change what differs. Saved in the project's folder, <code>{p.tables}/</code>.
         </div>
-        {!csv ? <div className="muted">reading data/energy-codes/…</div> : <>
+        {!csv ? <div className="muted">reading the project's code tables…</div> : <>
           <div className="allRow">
             <label>code <select value={pick ?? ""} onChange={(e) => setPick(e.target.value)}>
               {editions.map((e) => <option key={e.id} value={e.id}>{e.label || e.id}</option>)}

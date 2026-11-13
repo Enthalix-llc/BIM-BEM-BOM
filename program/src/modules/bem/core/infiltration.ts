@@ -50,3 +50,17 @@ export function infilRulingOf(fields: Record<string, unknown> | undefined): Infi
   }
   return null;
 }
+
+/** A COEFFICIENT TABLE THE USER SUPPLIES (2026-11-12, named by a project's data sources): the table of ASHRAE Handbook—Fundamentals
+ *  ch. 16 by the house's storeys and its shelter class, as JSON — { cite, stack: { "1": Cs, "2": Cs, "3": Cs }, wind: { "<shelter 1–5>":
+ *  { "<storeys>": Cw } }, shelterWords?: { "<shelter>": "words" } }. None ships with the program; it only FILLS the Zone card's Cs and Cw,
+ *  which stay what the writer reads */
+export interface InfilTable { cite: string; stack: Record<string, number>; wind: Record<string, Record<string, number>>; shelterWords?: Record<string, string> }
+export function readInfilTable(text: string | null): InfilTable | null {
+  try {
+    const t = text ? JSON.parse(text) as InfilTable : null;
+    return t && typeof t.cite === "string" && t.stack && t.wind ? t : null;
+  } catch { return null; }
+}
+/** the Zone card's own record of the row it filled from (display only; the writer reads Cs and Cw) */
+export const INFIL_ROW_FIELD = { stories: "infiltration_stories", shelter: "infiltration_shelter" } as const;

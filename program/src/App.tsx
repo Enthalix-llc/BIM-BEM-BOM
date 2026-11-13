@@ -5,6 +5,7 @@
 // wireframe, drawn FROM the sql.js rows) + the area-identity gate badge.
 // Pane 3 is the Phase-2 placeholder (single-plane IDF-DB).
 
+import { NewProjectDialog } from "./view/NewProjectDialog.js";
 import { LensPicker } from "./modules/bem/view/bemUi.js";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as WebIFC from "web-ifc";
@@ -94,10 +95,13 @@ import { baseName, fmtTemp } from "./modules/bem/view/bemUi.js";
 import { siteTypes } from "./modules/bem/view/SiteTable.js";
 import { LocationFrame, LocationLocator, WeatherStationsMap, StationList, SiteFilesFrame, TurnMenu, stationsInView, zoneCode, type SiteFocus, type Located } from "./modules/bem/view/SiteViews.js";
 import type { MapBounds } from "./view/TileMap.js";
-import { parseStationListing, groupStations, nearestStations, wmoOfEpw, stationId, newestFile, WEATHER_LISTING_URL, STATIONS_CACHE, type Station, type NearStation, type StationFile } from "./core/weatherStations.js";
+import { parseStationListing, parseStationKml, USA_TMYX_KML, TMYX_CACHE, groupStations, nearestStations, wmoOfEpw, stationId, newestFile, WEATHER_LISTING_URL, STATIONS_CACHE, type Station, type NearStation, type StationFile } from "./core/weatherStations.js";
 import { projectSiteFile, roomSolids, isProjected } from "./core/siteProject.js";
 import { isShaft, projectElevation, spacesOnRoof } from "./core/levels.js";
-import { parseCounties, climateZoneAt, COUNTIES_URL, COUNTIES_CACHE, type CountyFeature, type CountyZoneRead } from "./core/climateZone.js";
+import { parseCounties, climateZoneAt, climateZoneFromTable, parseCountyZones, COUNTIES_URL, COUNTIES_CACHE, type CountyFeature, type CountyZone, type CountyZoneRead } from "./core/climateZone.js";
+import { STANDARD_SOURCES, DEFAULT_CODE_TABLES, readSources, type ProjectSources } from "./core/projectSources.js";
+import { readInfilTable, type InfilTable } from "./modules/bem/core/infiltration.js";
+import { readGroundTable, type GroundTable } from "./modules/bem/core/groundCoupling.js";
 import { parseEnergyCodes, mergeEnergyCodes, setEnergyCodeData, ENERGY_CODE_FILES } from "./modules/bem/core/energyCodes.js";
 import PNNL_EDITIONS_CSV from "./modules/bem/reference/pnnl-editions.csv?raw";
 import PNNL_VALUES_CSV from "./modules/bem/reference/pnnl-values.csv?raw";
@@ -125,7 +129,7 @@ import { BomReport } from "./modules/bom/view/BomReport.js";
 import { runCalendar, dayLabel } from "./modules/bem/core/scheduleCalendar.js";
 import { ruledStack } from "./modules/bem/core/bemModel.js";
 import { LIB_FILES, CURVE_FILES, parseLibrary, parseCurveFile, formatLibraryCensus, parseIdfObjects, type Library } from "./modules/bem/core/idfLib.js";
-import { buildMaterialsDb, openMaterialsDb, readMaterialsMeta, queryMaterials, queryFenestration, querySources, withMaterials, seedSha, formatMaterialsCensus, mergeUserRows, readSidecar, writeSidecar, handFenestration, candidateRows, layerPickFor, MATERIALS_DB, MATERIALS_SIDECAR, OSSTD_URL, OSSTD_CACHE, REFERENCE_FILES, type MaterialRow, type GlazingProduct, type MaterialSource } from "./modules/bem/core/materialsDb.js";
+import { type ReferenceManifest, buildMaterialsDb, openMaterialsDb, readMaterialsMeta, queryMaterials, queryFenestration, querySources, withMaterials, seedSha, formatMaterialsCensus, mergeUserRows, readSidecar, writeSidecar, handFenestration, candidateRows, layerPickFor, MATERIALS_DB, MATERIALS_SIDECAR, OSSTD_URL, OSSTD_CACHE, REFERENCE_FILES, type MaterialRow, type GlazingProduct, type MaterialSource } from "./modules/bem/core/materialsDb.js";
 import { searchUrl, handMaterial, formFromRow, searchQueryFor, customLayerMaterial, BROWSE_URLS, type HandInput } from "./modules/bem/core/materialSearch.js";
 import { MaterialDialog, newDialog, type DialogState } from "./modules/bem/view/MaterialDialog.js";
 import { FenestrationDialog, newFenDialog, editFenDialog, type FenDialogState } from "./modules/bem/view/FenestrationDialog.js";
@@ -234,6 +238,18 @@ export function App(): React.ReactElement {
   /** the systems diagram as idf.db holds it after the last rebuild or Save (2026-09-10) */
   const savedDiagramRef = useRef<{ components: number; connectors: number; zones: number; at: string | null } | null>(null);
   const [bemLedger, setBemLedger] = useState<BemLedger | null>(null);
+  // THE PROJECT'S DATA SOURCES (2026-11-12, core/projectSources.ts): the open project's own record (its project.sqlite), read once at the
+  // page's start — opening another project, or saving its sources, reloads the page; with no project open, the standard template's
+  const templateSources = useMemo(() => {
+    const raw = window.projectNow?.sources;
+    if (!raw) return STANDARD_SOURCES;
+    const r = readSources(raw);
+    if (r.problems.length) console.warn(`[sources] the project's record: ${r.problems.join("; ")}`);
+    return r.sources;
+  }, []);
+  const sourcesNow = (): ProjectSources => templateSources;
+  const sources = templateSources;
+  const sourcesKey = JSON.stringify(sources);
   /** the staged record as last CONFIRMED on disk for this file (undefined = not known yet), the sha the stages in memory
    *  belong to, the load generation (bumped when a load ends, so an edit made during it is written), the journal's last
    *  content, and the draft's word for the column (2026-09-10: the sheet is never lost) */
@@ -417,28 +433,69 @@ export function App(): React.ReactElement {
   const statementsTimer = useRef<number | null>(null);
   const [epwLine, setEpwLine] = useState("no weather file read");
   const bomLedgerRef = useRef<BomLedger | null>(null);
-  // BOM › UTILITY (2026-10-03): the tariff cards the user made from their utility's published schedule (data/tariffs/tariff.json, from the
+  // BOM › UTILITY (2026-10-03): the tariff cards the user made from their utility's published schedule (the project's tables/tariffs/tariff.json, from the
   // template references/tariffs/tariff.template.json), and the one the BOM ledger applied — written into every BEM build as the engine's
   // UtilityCost objects. No card ships with the program.
   const [tariffRead, setTariffRead] = useState<ReturnType<typeof parseTariffs> | null>(null);
   const tariffReadRef = useRef<ReturnType<typeof parseTariffs> | null>(null);
   // the SAMPLE card ships with the program (2026-10-16): offered beside the user's, and the one a run is priced by when none is applied
-  useEffect(() => { void window.bem.readDataFile("tariffs/tariff.json").then((b) => { const t = b ? new TextDecoder().decode(b) : null; const r = withSample(t ? parseTariffs(t) : null, parseTariffs(SAMPLE_TARIFF_JSON)); tariffReadRef.current = r; setTariffRead(r); }); }, []);
-  // THE ENERGY CODE'S VALUES, THE USER'S OWN (data/energy-codes/*.csv; the empty templates and how to fill them: references/energy-codes/):
+  // the cards are read from the files the project's data sources name (2026-11-12: tables/tariffs/tariff.json by the standard template)
+  useEffect(() => {
+    let gone = false;
+    void (async () => {
+      const src = sourcesNow().tariffs;
+      const reads = (await Promise.all(src.files.map(async (f) => { const t = await window.bem.readHomeFile(f); return t ? parseTariffs(t) : null; }))).filter((x): x is ReturnType<typeof parseTariffs> => !!x);
+      const user = reads.length ? reads.reduce((a, b) => ({ file: a.file || b.file ? { readAt: a.file?.readAt ?? b.file?.readAt ?? "", utility: a.file?.utility || b.file?.utility || "", cards: [...(a.file?.cards ?? []), ...(b.file?.cards ?? [])] } : null, usable: [...a.usable, ...b.usable], refused: [...a.refused, ...b.refused] })) : null;
+      const r = src.sample ? withSample(user, parseTariffs(SAMPLE_TARIFF_JSON)) : (user ?? parseTariffs("{}"));
+      if (gone) return;
+      tariffReadRef.current = r; setTariffRead(r);
+    })();
+    return () => { gone = true; };
+  }, [sourcesKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // THE ENERGY CODE'S VALUES, THE USER'S OWN (the project's tables/energy-codes/*.csv; the empty templates and how to fill them: references/energy-codes/):
   // read once at start, and awaited before any model is built — no code table ships with the program. A file absent reads empty
   const energyCodesReadRef = useRef<Promise<void> | null>(null);
   const energyCodesRead = (): Promise<void> => {
     if (!energyCodesReadRef.current) energyCodesReadRef.current = (async () => {
-      const text = async (rel: string): Promise<string> => { const b = await window.bem.readDataFile(rel); return b ? new TextDecoder().decode(b) : ""; };
+      // the folder the project's data sources name (2026-11-12; tables/energy-codes by the standard template), read from the project's folder
+      const src = sourcesNow().energyCodes, dir = src.tables ?? DEFAULT_CODE_TABLES;
+      const text = async (rel: string): Promise<string> => (await window.bem.readHomeFile(`${dir}/${rel.split("/").pop()}`)) ?? "";
       const [editions, values, adoptions, overrides] = await Promise.all([text(ENERGY_CODE_FILES.editions), text(ENERGY_CODE_FILES.values), text(ENERGY_CODE_FILES.adoptions), text(ENERGY_CODE_FILES.overrides)]);
-      // the DOE/PNNL prototype values ship with the program (2026-10-15); the user's own tables are read first and win
-      const data = mergeEnergyCodes(parseEnergyCodes({ editions, values, adoptions, overrides }), parseEnergyCodes({ editions: PNNL_EDITIONS_CSV, values: PNNL_VALUES_CSV, adoptions: "", overrides: "" }));
+      // the DOE/PNNL prototype values ship with the program (2026-10-15) and are read when the sources say so; the user's own tables
+      // are read first and win
+      const own = parseEnergyCodes({ editions, values, adoptions, overrides });
+      const data = src.shipped ? mergeEnergyCodes(own, parseEnergyCodes({ editions: PNNL_EDITIONS_CSV, values: PNNL_VALUES_CSV, adoptions: "", overrides: "" })) : own;
       setEnergyCodeData(data);
       if (data.problems.length) console.warn(`[energy codes] ${data.problems.length} row(s) refused:\n${data.problems.join("\n")}`);
     })();
     return energyCodesReadRef.current;
   };
-  useEffect(() => { void energyCodesRead(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // THE TABLES A PROJECT'S DATA SOURCES NAME (2026-11-12): a Cs/Cw table and an F/C table — read from the home folder, they FILL what the
+  // user would type (the Zone card's Cs and Cw, the Floors' F and C); none ships with the program
+  const [infilTable, setInfilTable] = useState<InfilTable | null>(null);
+  const [groundTable, setGroundTable] = useState<GroundTable | null>(null);
+  useEffect(() => {
+    let gone = false;
+    const i = sources.infiltration, g = sources.groundFactors;
+    void (async () => {
+      const it = i.mode === "table" ? readInfilTable(await window.bem.readHomeFile(i.file)) : null;
+      const gt = g.mode === "table" ? readGroundTable(await window.bem.readHomeFile(g.file)) : null;
+      if (gone) return;
+      setInfilTable(it); setGroundTable(gt);
+      if (i.mode === "table" && !it) setStatus(`data sources: the infiltration table ${i.file} could not be read`);
+      if (g.mode === "table" && !gt) setStatus(`data sources: the F/C table ${g.file} could not be read`);
+    })();
+    return () => { gone = true; };
+  }, [JSON.stringify(sources.infiltration), JSON.stringify(sources.groundFactors)]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // read at start, and again when the project's data sources change — the model rebuilt on the new tables
+  const codesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const k = JSON.stringify(sources.energyCodes);
+    if (codesKeyRef.current === k) return;
+    const first = codesKeyRef.current === null;
+    codesKeyRef.current = k; energyCodesReadRef.current = null;
+    void energyCodesRead().then(() => { if (!first && bemModelRef.current) void refreshBemModel(); });
+  }, [sourcesKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   const appliedTariff = (): IdfModel["tariff"] => {
     const t = bomLedgerRef.current?.tariff, card = cardInForce(tariffReadRef.current, t?.card);
     return card ? { card, ...(t?.pca ? { pca: t.pca } : {}) } : null;
@@ -1097,6 +1154,8 @@ export function App(): React.ReactElement {
       // AFTER A RELOAD (a crash the main process recovered from, a merge, a hot reload): the house this window had open is opened again
       let reopen: string | null = null;
       try { reopen = window.sessionStorage.getItem(OPEN_FILE_KEY); } catch { reopen = null; }
+      // a project opened (or a new window on one) opens the IFC it last had open (2026-11-12)
+      if (!reopen && window.projectNow?.openIfc) reopen = window.projectNow.openIfc;
       const rec = await window.bim.lastRecovery().catch(() => null);
       if (disposed) return;
       if (rec) setRecovered({ ...rec, reopened: reopen });
@@ -2053,7 +2112,7 @@ export function App(): React.ReactElement {
   // THE CLIMATE ZONE BY COUNTY (user, 2026-09-07): the two public tables, read once from
   // data/cache (fetched the first time), place the position in force in its county and
   // read the county's zone; the settings carry it as a dataset value beside the .ddy's word
-  const countyRef = useRef<{ counties: CountyFeature[] } | null>(null);
+  const countyRef = useRef<{ counties: CountyFeature[]; tableKey?: string; zones?: Map<string, CountyZone> } | null>(null);
   const countyZoneRef = useRef<CountyZoneRead | null>(null);
   const countyZoneFor = async (site: { latitude: number; longitude: number } | null): Promise<CountyZoneRead | null> => {
     if (!site) return null;
@@ -2062,8 +2121,20 @@ export function App(): React.ReactElement {
       if ("error" in c) return null;
       countyRef.current = { counties: parseCounties(c.text) };
     }
-    // the zone is the user's reading of the county's row in the code's table, entered with the energy code (BEM › SITE)
-    return climateZoneAt(site.latitude, site.longitude, countyRef.current.counties, climateZoneOf(bemLedgerRef.current?.site?.energyCode));
+    // the zone is the user's reading of the county's row in the code's table, entered with the energy code (BEM › SITE) — or, when the
+    // project's data sources name a county table (2026-11-12), the county's row of that table; a zone typed with the code still wins
+    const typed = climateZoneOf(bemLedgerRef.current?.site?.energyCode);
+    const cz = sourcesNow().climateZone;
+    if (cz.mode === "county-table") {
+      const key = cz.file ?? cz.url ?? "";
+      if (countyRef.current.tableKey !== key) {
+        const t = cz.file ? await window.bem.readHomeFile(cz.file) : await window.bem.fetchCached(cz.url!, `county-climate-zones-${sha256Hex(cz.url!).slice(0, 12)}.csv`, null).then((r) => ("text" in r ? r.text : null));
+        countyRef.current = { ...countyRef.current, tableKey: key, zones: t ? parseCountyZones(t) : new Map() };
+      }
+      const read = climateZoneFromTable(site.latitude, site.longitude, countyRef.current.counties, countyRef.current.zones ?? new Map());
+      return read && typed ? { ...read, zone: typed.trim().toUpperCase() } : read;
+    }
+    return climateZoneAt(site.latitude, site.longitude, countyRef.current.counties, typed);
   };
   /** MATERIALS.DB (2026-09-08): read from data/, rebuilt from its seeds when absent or when a seed moved — the DataSets' text, the catalogue
    *  fetched once at its pinned commit, the user's sidecar — saved, then READ BACK; the library carries its rows for every pick */
@@ -2079,6 +2150,11 @@ export function App(): React.ReactElement {
       const reference: Array<{ file: string; text: string }> = [];
       const refMissing: string[] = [];
       for (const f of REFERENCE_FILES) { const t = await window.bem.readReference(`materials/${f}`); if (t) reference.push({ file: f, text: t }); else refMissing.push(f); }
+      // and the lists the project's data sources name (2026-11-12), from the home folder, with the datasets they fill
+      const src = sourcesNow();
+      for (const f of src.referenceLists) { const t = await window.bem.readHomeFile(f); if (t) reference.push({ file: f.split("/").pop() ?? f, text: t }); else refMissing.push(f); }
+      let manifest: ReferenceManifest | undefined;
+      if (src.referenceManifest) { const t = await window.bem.readHomeFile(src.referenceManifest); try { manifest = t ? JSON.parse(t) as ReferenceManifest : undefined; } catch { refMissing.push(`${src.referenceManifest} (not JSON)`); } if (!t) refMissing.push(src.referenceManifest); }
       let user: MaterialRow[] = sidecar.rows;
       const bytes = await window.bem.readDataFile(MATERIALS_DB);
       let db = bytes ? openMaterialsDb(SQL, bytes) : null;
@@ -2092,7 +2168,7 @@ export function App(): React.ReactElement {
           setStatus(`materials: ${merged.recovered.length} saved row${merged.recovered.length > 1 ? "s" : ""} carried forward from materials.db into ${MATERIALS_SIDECAR} — ${merged.recovered.map((r) => r.name).join(", ")}`);
         }
       }
-      const seeds = { datasets: datasets.filter((d) => /^ASHRAE_2005_HOF|^Composite|^WindowConstructs/.test(d.file)), osstdJson, user, reference, userFen: sidecar.fenestration ?? [] };
+      const seeds = { datasets: datasets.filter((d) => /^ASHRAE_2005_HOF|^Composite|^WindowConstructs/.test(d.file)), osstdJson, user, reference, userFen: sidecar.fenestration ?? [], ...(manifest ? { manifest } : {}) };
       const want = seedSha(seeds);
       let census = db ? "read from data/materials.db" : "";
       if (!db || readMaterialsMeta(db).get("seed_sha256") !== want) {
@@ -2333,6 +2409,13 @@ export function App(): React.ReactElement {
     setDraftNote(led.staged ? { at: led.staged.at } : null);
     await refreshBemModel(true);
   }, [refreshBemModel]);
+  // THE PROJECT'S DATA SOURCES SAVED (2026-11-12): into the project's project.sqlite; the page reloads, so every loader reads the new
+  // record (the drafts on the tabs are kept: the stage is on disk and in the journal)
+  const saveSources = async (next: ProjectSources | null): Promise<void> => {
+    if (!window.projectNow) { setStatus("open a project first — its data sources are kept with it"); return; }
+    await window.projectFolder.setSources(next ?? STANDARD_SOURCES);
+    window.location.reload();
+  };
   // THE STAGE IS RETAINED (2026-09-09). What waits on an Apply button — the
   // CONSTRUCTIONS rulings, the ground method, the SITE settings — lived only in
   // the process, and a restart lost the user's evening ("the idf db changes
@@ -2518,7 +2601,10 @@ export function App(): React.ReactElement {
     const into = direct ? room : zoneResolver(zonesRef.current)(room);
     const via = into !== room ? into : null;
     const held = direct ?? (via ? roomHeld.get(via) ?? null : null);
-    return { held, via, className: (held ? " held" : "") + (cfdTab && cfdPicks.includes(room) ? " cfdPicked" : ""), style: held ? { color: zoneColor(held.id) } : undefined, onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); zoomToSpace(room); if (cfdTab) return; if (!held && !via && asmCompiled.zones.length && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 40 - 24 * asmCompiled.zones.length), room, zoneId: "", zoneName: "" }); else if (direct && held && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 120), room, zoneId: held.id, zoneName: held.name }); } };
+    // a space MERGED into another (BIM › spaces "assign to") is struck through (user, 2026-11-11: "use strikethrough on space name
+    // for spaces that are merged") — it is that space's air now, not a space of its own
+    const style: React.CSSProperties | undefined = held || via ? { ...(held ? { color: zoneColor(held.id) } : {}), ...(via ? { textDecoration: "line-through" } : {}) } : undefined;
+    return { held, via, className: (held ? " held" : "") + (cfdTab && cfdPicks.includes(room) ? " cfdPicked" : ""), style, onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); zoomToSpace(room); if (cfdTab) return; if (!held && !via && asmCompiled.zones.length && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 40 - 24 * asmCompiled.zones.length), room, zoneId: "", zoneName: "" }); else if (direct && held && lastRightRef.current) setRoomMenu({ x: Math.min(e.clientX, window.innerWidth - 280), y: Math.min(e.clientY, window.innerHeight - 120), room, zoneId: held.id, zoneName: held.name }); } };
   };
   /** A SPACE CLICKED IN THE LEFT COLUMN (2026-11-11, the user: "on the cfd tab, switching space selection to another space … needs
    *  to switch focus. If a cfd model doesn't exist for the selected space, then offer up a cfd setup"): on the CFD tab the room
@@ -2664,7 +2750,7 @@ export function App(): React.ReactElement {
     const out = { ...g }; if (Object.keys(rooms).length) out.rooms = rooms; else delete out.rooms;
     return out;
   });
-  const gainPending = (() => { const a = bemLedger?.gains ?? {}; const n = (k: "rooms" | "zones"): number => Object.keys({ ...(gainStage[k] ?? {}), ...(a[k] ?? {}) }).filter((x) => JSON.stringify(gainStage[k]?.[x] ?? null) !== JSON.stringify(a[k]?.[x] ?? null)).length; return n("rooms") + n("zones"); })();
+  const gainPending = (() => { const a = bemLedger?.gains ?? {}; const n = (k: "rooms" | "zones"): number => Object.keys({ ...(gainStage[k] ?? {}), ...(a[k] ?? {}) }).filter((x) => JSON.stringify(gainStage[k]?.[x] ?? null) !== JSON.stringify(a[k]?.[x] ?? null)).length; return n("rooms") + n("zones") + (JSON.stringify(gainStage.transfers ?? []) !== JSON.stringify(a.transfers ?? []) ? 1 : 0); })();
   // RUN'S HONESTY (2026-09-15, the tab review): the model RUN describes is rebuilt from the APPLIED ledger, so what the
   // tabs hold STAGED is not in it — counted here in words for the RUN column, never left silent
   const runStaged = ((): Array<{ what: string; tab: TabId }> => {
@@ -2900,7 +2986,7 @@ export function App(): React.ReactElement {
     const end = span.b > latestEnd() ? latestEnd() : span.b;
     try {
       setCalBusy("the actual-year weather …");
-      const w = ownEpw ? { epw: ownEpw } : await makeActualWeather({ start: span.a, end, lat: Number(site.latitude.toFixed(4)), lon: Number(site.longitude.toFixed(4)), template: bemLedgerRef.current?.weather?.epw, onProgress: setCalBusy });
+      const w = ownEpw ? { epw: ownEpw } : await makeActualWeather({ start: span.a, end, lat: Number(site.latitude.toFixed(4)), lon: Number(site.longitude.toFixed(4)), template: bemLedgerRef.current?.weather?.epw, station: sourcesNow().amyStation, onProgress: setCalBusy });
       if ("error" in w) { setStatus(`calibration weather: ${w.error}`); return; }
       setCalBusy("simulating the actual year …");
       const SQL = await getSql(wasmUrl);
@@ -3551,18 +3637,23 @@ export function App(): React.ReactElement {
   const siteView: "model" | "location" | "weather" | "solar" | null = tab === "bem-site" ? (solar ? "solar" : siteFocus) : null;
   // THE WEATHER STATIONS FROM THE WEB (user, 2026-09-07): the listing is read once into
   // data/cache and parsed here; a file is used by downloading its zip once
+  // the listing the project's data sources name (2026-11-12): EnergyPlus's repository by the standard template, or climate.onebuilding.org's
+  // USA TMYx files
   const loadStations = useCallback(async (refresh = false) => {
+    const tmyx = sourcesNow().weatherListing === "onebuilding-tmyx-usa";
     setStationsBusy(true);
-    setStationsWord(refresh ? "fetching EnergyPlus's weather listing…" : "reading the listing…");
+    setStationsWord(refresh ? (tmyx ? "fetching the listing from climate.onebuilding.org…" : "fetching EnergyPlus's weather listing…") : "reading the listing…");
     try {
-      const r = await window.bem.fetchCached(WEATHER_LISTING_URL, STATIONS_CACHE, refresh ? 0 : null);
+      const r = await window.bem.fetchCached(tmyx ? USA_TMYX_KML : WEATHER_LISTING_URL, tmyx ? TMYX_CACHE : STATIONS_CACHE, refresh ? 0 : null);
       if ("error" in r) { setStationsWord(`listing unavailable: ${r.error}`); return; }
-      const rows = parseStationListing(r.text), groups = groupStations(rows);
+      const rows = tmyx ? parseStationKml(r.text) : parseStationListing(r.text), groups = groupStations(rows);
       setStations(groups);
-      setStationsWord(`EnergyPlus weather repository: ${rows.length.toLocaleString()} files · ${groups.length.toLocaleString()} stations · listing ${r.cached ? "cached" : "fetched"} ${r.savedAt.slice(0, 10)}`);
+      setStationsWord(`${tmyx ? "climate.onebuilding.org · USA TMYx" : "EnergyPlus weather repository"}: ${rows.length.toLocaleString()} files · ${groups.length.toLocaleString()} stations · listing ${r.cached ? "cached" : "fetched"} ${r.savedAt.slice(0, 10)}`);
     } finally { setStationsBusy(false); }
-  }, []);
-  useEffect(() => { if (siteView === "weather" && stations === null && !stationsBusy) void loadStations(); }, [siteView]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // a change of listing reads the map again
+  useEffect(() => { setStations(null); }, [sources.weatherListing]);
+  useEffect(() => { if (siteView === "weather" && stations === null && !stationsBusy) void loadStations(); }, [siteView, stations]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (siteView !== "weather" || humidityByWmo.size || !epwList.length) return;
     void (async () => {
@@ -4335,6 +4426,7 @@ export function App(): React.ReactElement {
       applyTerrain(showTerrainRef.current);
       // the file this window has open — a reload (a crash recovered, a merge) reopens it; a new window starts empty
       try { window.sessionStorage.setItem(OPEN_FILE_KEY, picked.path); } catch { /* the reopen is a convenience */ }
+      if (window.projectNow) void window.projectFolder.setOpenIfc(picked.path);
       askAlignRef.current();   // a file beside the house with no accepted placement is shown in the alignment dialog
     } catch (err) {
       console.error(err);
@@ -4364,11 +4456,31 @@ export function App(): React.ReactElement {
     } finally { setBusy(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedCorrections, rebuildIdf, choices, showSpaces, fillOpacity, shellOn]);
+  // OPEN IFC… (2026-11-12, a project is a folder): a file in the open project's ifc/ opens; a file in another project's opens that project;
+  // any other file starts a NEW PROJECT — copied into the project's folder, the original left where it is
   const openIfc = useCallback(async () => {
     const picked = await window.bim.openIfc();
     if (!picked) return;
-    await loadPicked(picked);
-  }, [loadPicked]);
+    const owner = await window.projectFolder.ofIfc(picked.path);
+    if (owner && owner === window.projectNow?.dir) { await loadPicked(picked); return; }
+    if (owner) { await switchProject(owner, picked.path); return; }
+    const sibs = await window.bim.listSiblings(picked.path);
+    setNewProject({ ifc: picked.path, siblings: sibs.map((x) => x.path) });
+  }, [loadPicked]);   // eslint-disable-line react-hooks/exhaustive-deps
+  /** another project in force: main opens its folder, the page reloads on it, opening `ifc` (else the IFC it last had open) */
+  const switchProject = async (dir: string | null, ifc?: string): Promise<void> => {
+    if (shaRef.current && runRef.current) await window.bim.saveCorrections(shaRef.current, ledgerJson(shaRef.current));
+    const info = await window.projectFolder.open(dir);
+    try {
+      const next = ifc ?? info?.openIfc ?? null;
+      if (next) window.sessionStorage.setItem(OPEN_FILE_KEY, next); else window.sessionStorage.removeItem(OPEN_FILE_KEY);
+    } catch { /* the reopen is a convenience */ }
+    window.location.reload();
+  };
+  const [newProject, setNewProject] = useState<{ ifc: string | null; siblings: string[] } | null>(null);
+  const [recentProjects, setRecentProjects] = useState<Array<{ dir: string; name: string }>>([]);
+  const [examples, setExamples] = useState<Array<{ name: string; ifcs: string[] }>>([]);
+  useEffect(() => { if (openMenu) { void window.projectFolder.recent().then(setRecentProjects); void window.projectFolder.examples().then(setExamples); } }, [openMenu]);
   /** CLOSE IFC… · ALL (user, 2026-10-23, asked first): the house and the files beside it leave the window, which starts empty — the
    *  corrections ledger written now, the BEM drafts by the pagehide flush; the reopen key forgotten so the reload opens nothing */
   const closeAll = useCallback(async () => {
@@ -4496,7 +4608,7 @@ export function App(): React.ReactElement {
         <div className="saveAlarm" role="alert">
           <b>{saveAlarm.kind === "backup" ? "The backup of your files failed" : `NOT SAVED: ${saveAlarm.what ?? "a file"}`}</b>
           {" "}— {saveAlarm.error} · {new Date(saveAlarm.at).toLocaleTimeString()}
-          {saveAlarm.kind === "save" ? " · your last change is not on disk; do not close the app — tell Claude" : " · your files are saved in data/, not yet in the backup"}
+          {saveAlarm.kind === "save" ? " · your last change is not on disk; do not close the app" : " · your files are saved in data/, not yet in the backup"}
           <button onClick={() => setSaveAlarm(null)} title="hide this message (the next failure shows it again)">dismiss</button>
         </div>
       )}
@@ -4600,12 +4712,26 @@ export function App(): React.ReactElement {
           <button onClick={() => { armedSpaceRef.current = null; setArmedSpace(null); }}>cancel</button>
         </div>
       )}
+      {newProject && <NewProjectDialog ifc={newProject.ifc} siblings={newProject.siblings} onCancel={() => setNewProject(null)}
+        onCreated={(info) => { setNewProject(null); try { if (info.openIfc) window.sessionStorage.setItem(OPEN_FILE_KEY, info.openIfc); else window.sessionStorage.removeItem(OPEN_FILE_KEY); } catch { /* a convenience */ } window.location.reload(); }} />}
       {openMenu && (
         <>
           <div className="menuScrim" onPointerDown={() => setOpenMenu(null)} />
           <div className="ctxMenu" style={{ left: openMenu.left, top: openMenu.top }}>
-            <div className="ctxHead">open IFC</div>
-            <button onClick={() => { setOpenMenu(null); void openIfc(); }} title="open a house IFC file (it replaces the one open); the IFC files beside it are found and projected with it">Open IFC…</button>
+            <div className="ctxHead">project{window.projectNow ? ` · ${window.projectNow.name}` : " · none open"}</div>
+            <button onClick={() => { setOpenMenu(null); void openIfc(); }} title="an IFC in the open project opens; any other starts a new project — the file copied into the project's folder, the original left where it is">Open IFC…</button>
+            <button onClick={() => { setOpenMenu(null); void window.projectFolder.pickFolder("Open a project folder").then((d) => { if (d) void switchProject(d).catch((e: unknown) => setStatus(e instanceof Error ? e.message : String(e))); }); }} title="a project folder (it holds project.sqlite): its rulings, data sources and files">Open project…</button>
+            <button onClick={() => { setOpenMenu(null); setNewProject({ ifc: null, siblings: [] }); }} title="a new project folder from a template — pick the IFC files to copy into it">New project…</button>
+            {examples.map((x) => <button key={x.name} onClick={() => { setOpenMenu(null); void window.projectFolder.example(x.name).then((r) => setNewProject({ ifc: r.ifcs[0] ?? null, siblings: r.ifcs.slice(1) })).catch((e: unknown) => alert(e instanceof Error ? e.message : String(e))); }} title="the example's IFC files are put in your projects folder's Example/ folder, then a new project of your own is made from them — copied in, the example left as it is">New project from the example {x.name}…</button>)}
+            {recentProjects.filter((r) => r.dir !== window.projectNow?.dir).length > 0 && <div className="ctxHead">recent projects</div>}
+            {recentProjects.filter((r) => r.dir !== window.projectNow?.dir).slice(0, 8).map((r) => <button key={r.dir} title={r.dir} onClick={() => { setOpenMenu(null); void switchProject(r.dir); }}>{r.name}</button>)}
+            {window.projectNow && <>
+              <div className="ctxHead">this project</div>
+              <button onClick={() => { setOpenMenu(null); void window.projectFolder.reveal(); }} title={window.projectNow.dir}>Show the project folder</button>
+              <button onClick={() => { setOpenMenu(null); const n = window.prompt("Name the template — its data sources, tables, library and cache (never the IFCs, rulings or results):", `${window.projectNow?.name ?? "my"} template`); if (n) void window.projectFolder.saveTemplate(n, window.confirm("Make it the default for new projects?")).then((t) => setStatus(`template saved: ${t}`), (e: unknown) => setStatus(e instanceof Error ? e.message : String(e))); }} title="a template of your own from this project, for new projects">Save as template…</button>
+              <button onClick={() => { setOpenMenu(null); if (window.confirm(`Close the project ${window.projectNow?.name}? Its rulings are on disk.`)) void switchProject(null); }}>Close project</button>
+            </>}
+            <div className="ctxHead">files beside the building</div>
             <button disabled={!loadedAt || !siteFiles.some((f) => f.projected)} onClick={() => { setOpenMenu(null); openAlign(); }}
               title={siteFiles.some((f) => f.projected) ? "move and turn a file beside the house — see it in place before you Accept; ifc.db keeps the placement" : "no file beside the house is in the model"}>
               Edit Alignment…
@@ -5267,7 +5393,7 @@ export function App(): React.ReactElement {
           {/* the tabs above stay put; only what is under them scrolls (user, 2026-10-02) */}
           <div className="editScroll">
           {tab === "bem-site" && (
-            <BemSite model={bemModel} onCodesSaved={() => { energyCodesReadRef.current = null; void energyCodesRead().then(() => refreshBemModel()); }} county={countyZone} site={runRef.current?.site ?? null} elevation={runRef.current ? projectElevation(runRef.current) : null} trueNorth={runRef.current?.trueNorth ?? null}
+            <BemSite model={bemModel} codeTables={sources.energyCodes.tables ?? DEFAULT_CODE_TABLES} sources={{ own: window.projectNow ? templateSources : null, template: STANDARD_SOURCES, onSave: (next) => void saveSources(next) }} onCodesSaved={() => { energyCodesReadRef.current = null; void energyCodesRead().then(() => refreshBemModel()); }} county={countyZone} site={runRef.current?.site ?? null} elevation={runRef.current ? projectElevation(runRef.current) : null} trueNorth={runRef.current?.trueNorth ?? null}
               epw={bemLedger?.weather?.epw ?? null} epwList={epwList} ruling={bemLedger?.site ?? EMPTY_SITE} busy={bemBusy || bemRunning} imperial={imperial}
               onEpw={chooseEpw} onPickEpw={() => void pickEpw()} onApply={applySite} staged={siteStage ?? bemLedger?.staged?.site} onStage={setSiteStage}
               sun={sun} onSun={setSun} cycle={cycle} onCycle={setCycle} deciduous={deciduous} onDeciduous={setDeciduous} intensity={intensity} onIntensity={setIntensity}
@@ -5278,12 +5404,14 @@ export function App(): React.ReactElement {
               onFocus={(f) => { setSiteFocus(f); if (f !== "model") setSolar(false); }}
               onSolar={(on) => { setSolar(on); if (on) setSiteFocus("model"); }} address={siteAddress} locPick={locPick} />
           )}
-          {tab === "bem-constructions" && <BemConstructions groundFacts={detailGround && detailRow ? { g: detailGround, label: detailRow.label } : undefined} model={bemModel} imperial={imperial} rows={typeRows} ledger={bemLedger} library={libRef.current} libCensus={`${libCensus}${materialsCensus ? ` · materials.db: ${materialsCensus}` : ""}`} stage={consStage} onStage={stageCons} onRevert={() => { setConsStage(bemLedger?.constructions ?? {}); setConsGround(bemLedger?.ground); }} ground={consGround} onGround={setConsGround} onApply={applyConstructions} busy={bemBusy} selected={typeSel} onSelect={selectType} paint={consPaint} onPaint={setConsPaint} windowProducts={windowProducts} doorProducts={doorProducts} onFenNew={(key, label, unitAreaM2, count, section) => setFenDialog({ ...newFenDialog(key, label, section), unitAreaM2, unitCount: count, custom: true })}  onDoorGlazing={(ids, g) => void ruleDoorGlazing(ids, g)} doorGlazingRuled={doorGlazingRuled} />}
+          {tab === "bem-constructions" && <BemConstructions groundTable={groundTable} groundFacts={detailGround && detailRow ? { g: detailGround, label: detailRow.label } : undefined} model={bemModel} imperial={imperial} rows={typeRows} ledger={bemLedger} library={libRef.current} libCensus={`${libCensus}${materialsCensus ? ` · materials.db: ${materialsCensus}` : ""}`} stage={consStage} onStage={stageCons} onRevert={() => { setConsStage(bemLedger?.constructions ?? {}); setConsGround(bemLedger?.ground); }} ground={consGround} onGround={setConsGround} onApply={applyConstructions} busy={bemBusy} selected={typeSel} onSelect={selectType} paint={consPaint} onPaint={setConsPaint} windowProducts={windowProducts} doorProducts={doorProducts} onFenNew={(key, label, unitAreaM2, count, section) => setFenDialog({ ...newFenDialog(key, label, section), unitAreaM2, unitCount: count, custom: true })}  onDoorGlazing={(ids, g) => void ruleDoorGlazing(ids, g)} doorGlazingRuled={doorGlazingRuled} />}
           {tab === "bem-schedules" && <BemSchedules model={bemModel} library={libRef.current} stage={schedStage} onStage={(role, ref) => setSchedStage((st) => { const n = { ...st }; if (ref) n[role] = ref; else delete n[role]; return n; })} onRevert={() => { setSchedStage(bemLedger?.schedules ?? {}); setHolStage(appliedHolidays(bemLedger)); setCopyStage({}); }} onApply={applySchedules} busy={bemBusy} ledger={bemLedger} imperial={imperial} card={schedCard} onCard={setSchedCard}
             holidays={holStage} holidaysApplied={appliedHolidays(bemLedger)} seasons={userCal.seasons} copiesPending={Object.keys(copyStage).filter((k) => Object.values(schedStage).some((r) => r?.file === USER_SCHEDULE_FILE && r.name.toLowerCase() === k))} />}
           {tab === "bem-zones" && <BemZones model={bemModel} selectedZone={selZone} onZone={pickZone} imperial={imperial} lens={lens} legend={legend} hasRun={bem !== null} onLens={(l) => applyLens(l)}
             assembly={asm} assign={asmAssign} onAssign={setZoneAssign} onByLevel={() => { const n = zonesByLevel(); setStatus(n ? `${n} zone${n === 1 ? "" : "s"} made, one per level — staged: Save on ZONES keeps them` : "every room is already in a zone"); }} pending={diagramDiff(sysStage, bemLedger?.systems).pending} onApply={() => { void applySystems(sysStage); }} onRevert={() => setSysStage(bemLedger?.systems ?? {})} busy={bemBusy} compiled={asmCompiled} onAssembly={setAssembly}
-            selectedSpace={selSpaceName} onSpace={(room, zone) => { selectSpaceName(room); setSelZone(zone); }} gainPending={gainPending} isBedroom={(room) => isBedroom(room, bedroomMarksOf(gainStage))} onBedroom={tickBedroom} onApplyGains={() => { void applyGains(gainStage); }} onRevertGains={() => setGainStage(bemLedger?.gains ?? {})} />}
+            selectedSpace={selSpaceName} onSpace={(room, zone) => { selectSpaceName(room); setSelZone(zone); }} gainPending={gainPending} isBedroom={(room) => isBedroom(room, bedroomMarksOf(gainStage))} onBedroom={tickBedroom} onApplyGains={() => { void applyGains(gainStage); }} onRevertGains={() => setGainStage(bemLedger?.gains ?? {})} infilTable={infilTable}
+            transfers={gainStage.transfers ?? []} onTransfers={(t) => setGainStage((g) => { const n = { ...g }; if (t.length) n.transfers = t; else delete n.transfers; return n; })}
+            designFlow={(room) => { const l = bem?.loads?.spaces.get(room.toUpperCase()); return l ? { heating: l.designHeatingFlowM3s, cooling: l.designCoolingFlowM3s } : null; }} />}
           {tab === "bem-systems" && MAIN_OF[sysFocus] === "electrical" && (
             <ElectricalColumn imperial={imperial} asm={elecAsm} onChange={setElecAssembly} sel={elecSel} onSel={setElecSel} compiled={elecCompiled} panels={pvPanels} catalogueLabel={(c) => elecCatalogue.of(c)?.label ?? c}
               written={bemModel?.built.model.pv} writtenNote={bemModel?.settings.find((x) => x.key === "generation")?.value ?? null}
@@ -5320,7 +5448,7 @@ export function App(): React.ReactElement {
             <div className="sysSettings bomDetails">
               <div className="barHead">{bomSel.id === "amy" ? "the actual weather — NOAA + Open-Meteo" : "the weather the run used"}</div>
               {bomSel.id === "amy"
-                ? <WeatherMaker bills={[...bomImports.flatMap((i) => i.bills), ...statementBills(bomStatements)]} site={siteInForce ? { latitude: siteInForce.latitude, longitude: siteInForce.longitude } : null} template={bemLedger?.weather?.epw} />
+                ? <WeatherMaker bills={[...bomImports.flatMap((i) => i.bills), ...statementBills(bomStatements)]} site={siteInForce ? { latitude: siteInForce.latitude, longitude: siteInForce.longitude } : null} template={bemLedger?.weather?.epw} station={sources.amyStation} />
                 : <><div className="idfInfo">{epwLine}</div><div className="idfInfo">a typical year cannot calibrate against bills metered in a real one — an actual year can</div></>}
             </div>
           )}

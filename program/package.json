@@ -65,8 +65,12 @@
         "to": "references"
       },
       {
-        "from": "../samples",
-        "to": "samples"
+        "from": "../templates",
+        "to": "templates"
+      },
+      {
+        "from": "../examples",
+        "to": "examples"
       }
     ],
     "mac": {

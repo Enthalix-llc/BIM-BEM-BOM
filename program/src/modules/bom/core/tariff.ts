@@ -2,7 +2,7 @@
 // Copyright 2026 Enthalix LLC
 //
 // THE TARIFF (user, 2026-10-03: "BOM main view should show the energyplus results with utility costs included in both energyplus
-// runs and utility bills"). A card is the utility's own schedule as DATA (the user's data/tariffs/tariff.json, made from the
+// runs and utility bills"). A card is the utility's own schedule as DATA (the user's tables/tariffs/tariff.json, made from the
 // template references/tariffs/tariff.template.json): every number with the schedule, section and URL it was read from;
 // a number without its citation is refused. One arithmetic prices a month of the run and a month of the bills alike:
 //

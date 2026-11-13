@@ -166,3 +166,25 @@ export function assignKivaWalls(floors: KivaFloorIn[], walls: KivaWallIn[], reac
   }
   return { wallFloor, floorWalls, unplaced };
 }
+
+/** AN F/C TABLE THE USER SUPPLIES (2026-11-12, named by a project's data sources): ASHRAE 90.1 Appendix A's rows from the user's own copy,
+ *  as JSON — { fCite, fUninsulated, f: [{ placement, inches, rIp, f }], cCite, c: [{ rIp, c }] }. None ships with the program; it only
+ *  FILLS the F and C the user would type (CONSTRUCTIONS › Floors), which stay what the writer reads */
+export interface GroundTable { fCite: string; fUninsulated: number; f: Array<{ placement: SlabPlacement; inches: number; rIp: number; f: number }>; cCite: string; c: Array<{ rIp: number; c: number }> }
+export function readGroundTable(text: string | null): GroundTable | null {
+  try {
+    const t = text ? JSON.parse(text) as GroundTable : null;
+    return t && Array.isArray(t.f) && Array.isArray(t.c) && typeof t.fUninsulated === "number" ? t : null;
+  } catch { return null; }
+}
+/** the table's row at or under the asked R and distance (never interpolated), named */
+export function fFromTable(t: GroundTable, rIp: number, distM: number, placement: SlabPlacement): { ip: number; entry: string } {
+  const inches = distM / 0.0254;
+  const best = t.f.filter((x) => x.placement === placement && x.rIp <= rIp + 1e-9 && (placement === "full" || x.inches <= inches + 1e-9)).sort((a, b) => b.rIp - a.rIp || b.inches - a.inches)[0];
+  if (!best || rIp <= 0) return { ip: t.fUninsulated, entry: "uninsulated" };
+  return { ip: best.f, entry: placement === "full" ? `fully insulated slab, R-${best.rIp}` : `${best.inches} in ${placement}, R-${best.rIp}` };
+}
+export function cFromTable(t: GroundTable, rIp: number): { ip: number; entry: string } | null {
+  const best = t.c.filter((x) => x.rIp <= rIp + 1e-9).sort((a, b) => b.rIp - a.rIp)[0];
+  return best ? { ip: best.c, entry: best.rIp === 0 ? "uninsulated" : `R-${best.rIp} continuous` } : null;
+}

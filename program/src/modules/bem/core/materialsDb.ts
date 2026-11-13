@@ -113,8 +113,8 @@ export function dataSetKeyOf(sourceId: string, kind: DataKind): string {
 }
 /** the datasets as the filters read them — class and provider joined from the source row */
 export interface ResolvedDataSet { key: string; sourceId: string; kind: DataKind; sourceClass: SourceClass; provider: string; set: string; label: string }
-export function resolveDataSets(srcs: MaterialSource[], kind?: DataKind): ResolvedDataSet[] {
-  return DATASETS.filter((d) => !kind || d.kind === kind).map((d) => {
+export function resolveDataSets(srcs: MaterialSource[], kind?: DataKind, extra: typeof DATASETS = []): ResolvedDataSet[] {
+  return [...DATASETS, ...extra].filter((d) => !kind || d.kind === kind).map((d) => {
     const s = srcs.find((x) => x.id === d.sourceId);
     const provider = d.provider ?? s?.provider ?? d.sourceId;
     return { key: d.key, sourceId: d.sourceId, kind: d.kind, sourceClass: s?.sourceClass ?? "open", provider, set: d.set, label: `${provider} - ${d.set}` };
@@ -411,7 +411,10 @@ CREATE INDEX IF NOT EXISTS fenestration_s ON fenestration (section, product_type
 CREATE INDEX IF NOT EXISTS fenestration_ng ON fenestration (name_group);`;
 
 /** `reference`: the CSVs under references/materials/ (2026-09-16), by base name */
-export interface MaterialsSeeds { datasets: Array<{ file: string; text: string }>; osstdJson: string | null; user: MaterialRow[]; reference?: Array<{ file: string; text: string }>; userFen?: GlazingProduct[] }
+/** `manifest` (2026-11-12): the sources and datasets a project's own reference lists fill (its data sources' referenceManifest) — rows the
+ *  palette's Source and DataSet filters offer beside the shipped ones; none ships with the program */
+export interface ReferenceManifest { sources: MaterialSource[]; datasets: typeof DATASETS }
+export interface MaterialsSeeds { datasets: Array<{ file: string; text: string }>; osstdJson: string | null; user: MaterialRow[]; reference?: Array<{ file: string; text: string }>; userFen?: GlazingProduct[]; manifest?: ReferenceManifest }
 export interface MaterialsCensus {
   datasets: { material: number; nomass: number; airgap: number; provenance: number; refused: string[] };
   osstd: { rows: number; of: number; skipped: Record<string, number> } | null;
@@ -422,7 +425,7 @@ export interface MaterialsCensus {
 
 /** what the seeds are: their shas, so the db is rebuilt exactly when an input moved */
 export function seedSha(seeds: MaterialsSeeds): string {
-  return sha256Hex([MATERIALS_SCHEMA, ...seeds.datasets.map((d) => `${d.file}:${sha256Hex(d.text)}`), `osstd:${seeds.osstdJson ? sha256Hex(seeds.osstdJson) : "none"}`, `user:${sha256Hex(JSON.stringify(seeds.user))}`, `userFen:${sha256Hex(JSON.stringify(seeds.userFen ?? []))}`, ...(seeds.reference ?? []).map((d) => `reference ${d.file}:${sha256Hex(d.text)}`)].join("\n"));
+  return sha256Hex([MATERIALS_SCHEMA, ...seeds.datasets.map((d) => `${d.file}:${sha256Hex(d.text)}`), `osstd:${seeds.osstdJson ? sha256Hex(seeds.osstdJson) : "none"}`, `user:${sha256Hex(JSON.stringify(seeds.user))}`, `userFen:${sha256Hex(JSON.stringify(seeds.userFen ?? []))}`, ...(seeds.reference ?? []).map((d) => `reference ${d.file}:${sha256Hex(d.text)}`), ...(seeds.manifest ? [`manifest:${sha256Hex(JSON.stringify(seeds.manifest))}`] : [])].join("\n"));
 }
 
 /** the database from its seeds, in one pass; the census says what was taken and what was refused, by name */
@@ -430,12 +433,13 @@ export function buildMaterialsDb(SQL: SqlJsStatic, seeds: MaterialsSeeds): { db:
   const db = new SQL.Database();
   db.run(DDL);
   const stamp = now();
-  for (const s of SOURCES) db.run("INSERT INTO sources (id, name, kind, source_class, provider, label, url, attribution, license, units, keyless, search_url, pin, note, fetched_at, sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+  const allSources = [...SOURCES, ...(seeds.manifest?.sources ?? [])];
+  for (const s of allSources) db.run("INSERT INTO sources (id, name, kind, source_class, provider, label, url, attribution, license, units, keyless, search_url, pin, note, fetched_at, sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [s.id, s.name, s.kind, s.sourceClass, s.provider, s.label, s.url, s.attribution, s.license, s.units, s.keyless ? 1 : 0, s.searchUrl, s.pin, s.note, s.id === "osstd" && seeds.osstdJson ? stamp : null, s.id === "osstd" && seeds.osstdJson ? sha256Hex(seeds.osstdJson) : null]);
-  for (const d of resolveDataSets(SOURCES)) db.run("INSERT INTO datasets (key, source_id, kind, source_class, provider, set_name) VALUES (?,?,?,?,?,?)", [d.key, d.sourceId, d.kind, d.sourceClass, d.provider, d.set]);
+  for (const d of resolveDataSets(allSources, undefined, seeds.manifest?.datasets ?? [])) db.run("INSERT INTO datasets (key, source_id, kind, source_class, provider, set_name) VALUES (?,?,?,?,?,?)", [d.key, d.sourceId, d.kind, d.sourceClass, d.provider, d.set]);
   const ins = db.prepare("INSERT OR REPLACE INTO materials (key, dataset_key, name, class, kind, roughness, thickness_m, conductivity_w_mk, density_kg_m3, specific_heat_j_kgk, r_si, thermal_abs, solar_abs, visible_abs, source_id, source_ref, units_as_fetched, fetched_json, notes, added_at, keywords, name_group) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const put = (r: MaterialRow): void => { ins.run([r.key, r.datasetKey ?? dataSetKeyOf(r.sourceId, "material"), r.name, r.cls, r.kind, r.roughness, r.thicknessM, r.conductivityWmK, r.densityKgM3, r.specificHeatJKgK, r.rSi, r.thermalAbs, r.solarAbs, r.visibleAbs, r.sourceId, r.sourceRef, r.unitsAsFetched, r.fetchedJson, r.notes, r.addedAt || stamp, r.keywords?.length ? r.keywords.join(";") : null, nameGroup(r.name)]); };
-  const census: MaterialsCensus = { datasets: { material: 0, nomass: 0, airgap: 0, provenance: 0, refused: [] }, osstd: null, user: { rows: 0, fenestration: 0, rejected: [] }, reference: { materials: 0, keywords: 0, keywordsMapped: 0, keywordsUnmapped: 0, keywordsMissing: [], products: { marvin: 0, essential: 0, window: 0, door: 0, essentialWindow: 0, essentialDoor: 0, generic: 0, constructions: 0 }, skipped: {}, rejected: [] }, sources: SOURCES.length };
+  const census: MaterialsCensus = { datasets: { material: 0, nomass: 0, airgap: 0, provenance: 0, refused: [] }, osstd: null, user: { rows: 0, fenestration: 0, rejected: [] }, reference: { materials: 0, keywords: 0, keywordsMapped: 0, keywordsUnmapped: 0, keywordsMissing: [], products: { marvin: 0, essential: 0, window: 0, door: 0, essentialWindow: 0, essentialDoor: 0, generic: 0, constructions: 0 }, skipped: {}, rejected: [] }, sources: allSources.length };
   // the DataSets: every opaque material, a composite's numbered equivalents (#n) left on the library path
   for (const d of seeds.datasets) {
     for (const o of parseIdfObjects(d.text, d.file)) {

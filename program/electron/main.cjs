@@ -11,46 +11,74 @@ const projectStore = require("./projectStore.cjs");   // the ledgers by project 
 const explainWindow = require("./explainWindow.cjs");   // the Explain help in a window of its own, for a second monitor (2026-10-15)
 const cfdRun = require("./cfdRun.cjs");   // OpenFOAM, found and run for BOM › CFD (2026-11-04)
 
-// <repo>/data — the module contract's output location. INSTALLED (2026-10-20, the installers for macOS, Windows and Linux): the app's
-// own folder is read-only (inside the .app, under Program Files, in an AppImage), so the user's files — data/ and Weather/ — live in
-// the app-data folder beside projects.sqlite, and the shipped references and samples are read from the install's resources folder.
-// ENTHALIX_HOME names another folder for all of them (a test run, a portable copy)
-const HOME_DIR = process.env.ENTHALIX_HOME ? path.resolve(process.env.ENTHALIX_HOME) : null;
-if (HOME_DIR) app.setPath("userData", path.join(HOME_DIR, "chromium"));   // the window's own storage goes there too
+// A PROJECT IS A FOLDER (2026-11-12, the user: "a self-contained project … a transfer/saving of the project is complete and useable by
+// others"): <project>/project.sqlite (its versions, lineage, rulings and history, and its data-sources record), ifc/ (the IFCs copied in),
+// weather/, tables/ (what its sources name), library/ (the user's own materials, windows, schedules, holidays and seasons), cache/ (what
+// it read from the web), imports/ (the bills it imported) and data/ (the derived databases and runs). ONE project is in force at a time;
+// opening another points every path below at its folder and reloads the page. With none open, the app's own folder stands in (the
+// app-data folder installed; the repository in development; ENTHALIX_HOME when named) — nothing of a project is kept there.
+// The app's own folder holds only the window's storage and settings.json (the default template, the projects folder, recent projects).
+const APP_DIR = process.env.ENTHALIX_HOME ? path.resolve(process.env.ENTHALIX_HOME) : path.join(app.getPath("appData"), "Enthalix");
+if (process.env.ENTHALIX_HOME) app.setPath("userData", path.join(APP_DIR, "chromium"));   // the window's own storage goes there too
 // installed, the window's storage stays in the Enthalix folder it has used since 0.1.0, whatever the product is called (BIM-BEM-BOM
 // since 2026-10-26), so a rename never resets the views a user set up
-else if (app.isPackaged) app.setPath("userData", path.join(app.getPath("appData"), "Enthalix"));
-const REPO_DIR = HOME_DIR ?? (app.isPackaged ? path.join(app.getPath("appData"), "Enthalix") : path.resolve(__dirname, "..", ".."));
+else if (app.isPackaged) app.setPath("userData", APP_DIR);
 const SHIPPED_DIR = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..", "..");
-const DATA_DIR = path.join(REPO_DIR, "data");
-// <repo>/Weather — the project's weather files (the user's ruling, 2026-09-22): searched first, and where a download lands
-const WEATHER_DIR = path.join(REPO_DIR, "Weather");
+/** the folder in force when no project is open */
+const NO_PROJECT_DIR = process.env.ENTHALIX_HOME || app.isPackaged ? APP_DIR : path.resolve(__dirname, "..", "..");
+let PROJECT_DIR = null;
+const homeDir = () => PROJECT_DIR ?? NO_PROJECT_DIR;
+const dataDir = () => path.join(homeDir(), "data");
+// a project's weather files are in weather/; the app's own folder has always called it Weather/
+const weatherDir = () => path.join(homeDir(), PROJECT_DIR ? "weather" : "Weather");
+const cacheDir = () => path.join(PROJECT_DIR ?? dataDir(), "cache");
+const libraryDir = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "library") : dataDir());
+const importsDir = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "imports", "bom") : path.join(dataDir(), "bom", "imports"));
+const storeFile = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "project.sqlite") : path.join(APP_DIR, "projects.sqlite"));
+/** the user's own libraries: names the renderer reads and writes as it always did, kept in the project's library/ */
+const LIBRARY_NAMES = new Set(["materials-user.json", "schedules-user.idf", "calendars-user.json"]);
+
+// THE SETTINGS (the app's own): the default template, the projects folder, the recent projects (newest first), the project last open
+const SETTINGS_FILE = path.join(APP_DIR, "settings.json");
+function readSettings() { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch { return {}; } }
+function writeSettings(s) { fs.mkdirSync(APP_DIR, { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2)); }
+const projectsDefaultDir = () => readSettings().projectsDir ?? path.join(app.getPath("documents"), "BIM-BEM-BOM Projects");
+/** the shipped templates and examples (the repository's templates/ and examples/, an installed build's resources) */
+const TEMPLATES_DIR = path.join(SHIPPED_DIR, "templates");
+const EXAMPLES_DIR = path.join(SHIPPED_DIR, "examples");
 
 // A FAILED SAVE IS NEVER SILENT (2026-09-23): on 2026-09-18 the ledgers' writes failed for hours with only the SYSTEMS column
 // saying so. Every write of a user file reports a failure to every window (a banner on every tab)
 const broadcast = (status) => { for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send("app:save-status", { ...status, at: new Date().toISOString() }); } catch { /* window gone */ } } };
-// THE PROJECT STORE (2026-09-30, the user's rulings): projects.sqlite in the OS's per-user app-data folder — the path
-// Electron gives on every platform (macOS ~/Library/Application Support, Windows %APPDATA%, Linux ~/.config), writable
-// without admin rights and untouched by an update or a reinstall; never the install folder. Its own folder, Enthalix,
-// the same in development and installed — beside Chromium's userData, which is NOT moved: the renderer's local storage
-// (the view settings, the stage journal) lives there, and moving it would reset them on the first launch.
-const STORE_FILE = path.join(HOME_DIR ?? path.join(app.getPath("appData"), "Enthalix"), "projects.sqlite");
-let projects = null;   // opened before the first window (openProjects), so every ledger handler finds it
+// THE PROJECT STORE (2026-09-30; a file per project since 2026-11-12): the project's project.sqlite — its versions, their lineage, its
+// ledgers and their history — opened when the project is, written atomically on every change (projectStore.cjs, unchanged).
+let projects = null;
+let SQL_MODULE = null;
 async function openProjects() {
-  const initSqlJs = require("sql.js");
-  const dist = path.dirname(require.resolve("sql.js"));
-  const SQL = await initSqlJs({ locateFile: (f) => path.join(dist, f) });
-  projects = projectStore.openStore(STORE_FILE, SQL);
-  // the ledgers written under data/ before the store existed come in once — READ, never moved or deleted
-  const m = projects.migrateFromFiles(DATA_DIR);
-  if (!m.already) console.log(`[bim] project store ${STORE_FILE}: migrated ${m.imported.length} ledgers from data/ (${m.imported.join(", ") || "none"}), history ${m.history}${m.problems.length ? `, problems: ${m.problems.join("; ")}` : ""}`);
+  if (!SQL_MODULE) {
+    const initSqlJs = require("sql.js");
+    const dist = path.dirname(require.resolve("sql.js"));
+    SQL_MODULE = await initSqlJs({ locateFile: (f) => path.join(dist, f) });
+  }
+  if (projects) { try { projects.flush(); projects.close(); } catch { /* closing an old store never stops the next */ } }
+  fs.mkdirSync(path.dirname(storeFile()), { recursive: true });
+  projects = projectStore.openStore(storeFile(), SQL_MODULE);
+  // the ledgers written under data/ before the store existed come in once — READ, never moved or deleted (the app's own folder only)
+  if (!PROJECT_DIR) {
+    const m = projects.migrateFromFiles(dataDir());
+    if (!m.already) console.log(`[bim] project store ${storeFile()}: migrated ${m.imported.length} ledgers from data/ (${m.imported.join(", ") || "none"}), history ${m.history}${m.problems.length ? `, problems: ${m.problems.join("; ")}` : ""}`);
+  }
 }
 /** a user file written: a failure named to the windows, then thrown as before */
 function saveUser(what, write) {
   try { return write(); }
   catch (e) { broadcast({ kind: "save", ok: false, what, error: e instanceof Error ? e.message : String(e) }); throw e; }
 }
-const REF_IFC = path.join(SHIPPED_DIR, "references", "ifc");
+// A FILE A DATA SOURCE NAMES (2026-11-12): a table, a reference list or a tariff card, read from the project's folder only
+ipcMain.handle("app:read-home-file", async (_ev, rel) => {
+  try { const h = homeDir(), r = path.resolve(h, String(rel)); if (!(r === h || r.startsWith(h + path.sep))) throw new Error("outside the project folder"); return fs.readFileSync(r, "utf8"); } catch { return null; }
+});
+const ifcDir = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "ifc") : [path.join(homeDir(), "references", "ifc"), path.join(SHIPPED_DIR, "references", "ifc")].find((d) => fs.existsSync(d)) ?? homeDir());
 const REF_DIR = path.join(SHIPPED_DIR, "references");
 
 // CRASH RECOVERY (user, 2026-10-09: "This raises an issue with using electron for the final program as it fails on occasion"). Two
@@ -158,7 +186,7 @@ h1{font-size:18px;margin:0 0 18px;color:#e9b44c}code{color:#7fd1c0}p{max-width:7
 ipcMain.handle("bim:open-ifc", async () => {
   const res = await dialog.showOpenDialog({
     title: "Open IFC",
-    defaultPath: REF_IFC,
+    defaultPath: ifcDir(),
     filters: [{ name: "IFC", extensions: ["ifc"] }],
     properties: ["openFile"],
   });
@@ -188,8 +216,10 @@ ipcMain.handle("bim:list-siblings", async (_ev, p) => {
 
 ipcMain.handle("bim:save-db", async (_ev, name, bytes) => {
   const write = () => {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const p = path.join(DATA_DIR, name);
+    // the user's own libraries in the project's library/; the derived files in its data/
+    const dir = LIBRARY_NAMES.has(name) ? libraryDir() : dataDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, name);
     fs.writeFileSync(p, Buffer.from(bytes));
     return p;
   };
@@ -206,7 +236,7 @@ ipcMain.handle("bim:save-db", async (_ev, name, bytes) => {
 // overwritten by the next file opened. Reapplied on every load of that file.
 // Since 2026-09-30 every ledger lives in the project store (projects.sqlite), keyed by the file's sha as before.
 ipcMain.handle("bim:load-corrections", async (_ev, sha) => projects.loadLedger("corrections", sha));
-ipcMain.handle("bim:save-corrections", async (_ev, sha, json) => saveUser("BIM corrections", () => { projects.saveLedger("corrections", sha, json); return STORE_FILE; }));
+ipcMain.handle("bim:save-corrections", async (_ev, sha, json) => saveUser("BIM corrections", () => { projects.saveLedger("corrections", sha, json); return storeFile(); }));
 
 // WRITING THE IFC BACK. A deletion the user rules on is written into the
 // source file itself — lossless: the renderer rewrites only the lines the
@@ -230,16 +260,20 @@ const { spawn, spawnSync } = require("node:child_process");
 // a path under a folder, never beside it: "data-other/x" starts with "data" but is outside it, so the separator is part of the test
 const inside = (dir, r) => r === dir || r.startsWith(dir + path.sep);
 // BOM › CFD (2026-11-04): OpenFOAM found on this machine and run as its own program; the runs under data/cfd/runs
-cfdRun.register(ipcMain, { dataDir: DATA_DIR });
-const within = (p) => { const r = path.resolve(DATA_DIR, p); if (!inside(DATA_DIR, r)) throw new Error("outside data/"); return r; };
+cfdRun.register(ipcMain, { dataDir });
+const within = (p) => { const d = dataDir(), r = path.resolve(d, p); if (!inside(d, r)) throw new Error("outside data/"); return r; };
 ipcMain.handle("bem:read-data-file", async (_ev, rel) => {
-  try { return fs.readFileSync(within(rel)); } catch { return null; }
+  // the user's own libraries are read from the project's library/
+  try { return LIBRARY_NAMES.has(String(rel)) ? fs.readFileSync(path.join(libraryDir(), String(rel))) : fs.readFileSync(within(rel)); } catch { return null; }
 });
-// THE ENERGY CODE'S VALUES, as the user types them in SITE › energy code › Edit values (2026-10-15): written to data/energy-codes/
+// THE ENERGY CODE'S VALUES, as the user types them in SITE › energy code › Edit values (2026-10-15): written to tables/energy-codes/
 // under the template's names only; the file it replaces is kept beside it first (*.csv.<stamp>.bak) — the user's own table
 const ENERGY_CODE_NAMES = new Set(["editions.csv", "values.csv", "state-adoptions.csv", "state-overrides.csv"]);
-ipcMain.handle("bem:save-energy-codes", async (_ev, files) => saveUser("your energy code values", () => {
-  const dir = path.join(DATA_DIR, "energy-codes");
+ipcMain.handle("bem:save-energy-codes", async (_ev, files, rel) => saveUser("your energy code values", () => {
+  // the folder the project's data sources name (tables/energy-codes by default), inside the project's folder — a code is the project's
+  if (!PROJECT_DIR) throw new Error("open a project first — its energy-code tables are kept in its folder");
+  const dir = path.resolve(PROJECT_DIR, String(rel || "tables/energy-codes"));
+  if (!inside(PROJECT_DIR, dir)) throw new Error("outside the project's folder");
   fs.mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const written = [];
@@ -263,17 +297,17 @@ ipcMain.handle("bem:exists", async (_ev, p) => fs.existsSync(p));
 ipcMain.handle("bem:pick-epw", async () => {
   const res = await dialog.showOpenDialog({
     title: "Choose a weather file",
-    defaultPath: WEATHER_DIR,
+    defaultPath: weatherDir(),
     filters: [{ name: "EnergyPlus weather", extensions: ["epw"] }],
     properties: ["openFile"],
   });
   return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
 });
 ipcMain.handle("bem:load-decisions", async (_ev, sha) => projects.loadLedger("bem", sha));
-ipcMain.handle("bem:save-decisions", async (_ev, sha, json) => saveUser("BEM rulings", () => { projects.saveLedger("bem", sha, json); return STORE_FILE; }));
+ipcMain.handle("bem:save-decisions", async (_ev, sha, json) => saveUser("BEM rulings", () => { projects.saveLedger("bem", sha, json); return storeFile(); }));
 // the same write, SYNCHRONOUS — the renderer's last word on pagehide, so a reload or a quit inside the debounce loses nothing
 ipcMain.on("bem:save-decisions-sync", (ev, sha, json) => {
-  try { ev.returnValue = saveUser("BEM rulings", () => { projects.saveLedger("bem", sha, json); return STORE_FILE; }); } catch (e) { ev.returnValue = null; console.error(e); }
+  try { ev.returnValue = saveUser("BEM rulings", () => { projects.saveLedger("bem", sha, json); return storeFile(); }); } catch (e) { ev.returnValue = null; console.error(e); }
 });
 // THE PREVIOUS VERSIONS of a ledger (2026-09-10): listed newest first, read one at a time — never deleted from here.
 // An entry's `path` is its reference in the store (db:<id>), the shape the renderer has always passed back
@@ -286,11 +320,11 @@ ipcMain.handle("bem:engine", async () => {
   engineCache = engines.findEngine();
   if (!engineCache) return null;
   // the install directory beside the binary: DataSets, WeatherData, the schema; the other installs named; where weather is looked for
-  return { ...engineCache, weatherDirs: engines.weatherDirs(REPO_DIR, engineCache) };
+  return { ...engineCache, weatherDirs: engines.weatherDirs(homeDir(), engineCache) };
 });
 // A WEATHER FILE BY NAME (2026-09-23): a path that no longer exists (a ledger written on another machine or for another
 // install) resolves to the first of Weather/, the engine's WeatherData, the other installs', data/weather/* holding its name
-ipcMain.handle("bem:resolve-epw", async (_ev, p) => engines.resolveEpw(p, engines.weatherDirs(REPO_DIR, engineCache ??= engines.findEngine())));
+ipcMain.handle("bem:resolve-epw", async (_ev, p) => engines.resolveEpw(p, engines.weatherDirs(homeDir(), engineCache ??= engines.findEngine())));
 ipcMain.handle("bem:list-dir", async (_ev, dir, ext) => {
   try { return fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(String(ext).toLowerCase())).sort().map((f) => path.join(dir, f)); }
   catch { return []; }
@@ -301,7 +335,7 @@ ipcMain.handle("bem:list-dir", async (_ev, dir, ext) => {
 // the renderer's origin never meets a CORS refusal.
 const UA = "BIM-BEM-BOM/0.1 (Electron desktop; +https://github.com/Enthalix-llc/BIM-BEM-BOM)";   // the app and a contact, as OSMF and Wikimedia ask; never the user's e-mail
 ipcMain.handle("bem:fetch-cached", async (_ev, url, cacheName, maxAgeDays) => {
-  const dir = path.join(DATA_DIR, "cache");
+  const dir = cacheDir();
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, String(cacheName).replace(/[^a-z0-9._-]/gi, "_"));
   try {
@@ -335,11 +369,11 @@ ipcMain.handle("bem:open-browser", async (_ev, url) => {
 // AN ADDRESS → A POSITION: OpenStreetMap's Nominatim, no key; the answers are candidates the user picks from, never applied
 // unasked. The OSMF Nominatim usage policy (read 2026-10-14) asks three things of an app, all kept here: at most one request a
 // second (requests wait their turn), results cached on this side (data/cache/geocode/, 30 days), and the service switchable
-// without a software update — data/settings.json { "geocoderUrl": "https://…/search" } names any Nominatim-compatible server.
+// without a software update — settings.json (the app-data folder) { "geocoderUrl": "https://…/search" } names any Nominatim-compatible server.
 const GEOCODER_DEFAULT = "https://nominatim.openstreetmap.org/search";
 function geocoderUrl() {
   try {
-    const s = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "settings.json"), "utf8"));
+    const s = readSettings();
     if (s && typeof s.geocoderUrl === "string" && /^https:\/\//i.test(s.geocoderUrl)) return s.geocoderUrl;
   } catch { /* no settings file: the default */ }
   return GEOCODER_DEFAULT;
@@ -348,7 +382,7 @@ let geocodeTurn = Promise.resolve(), geocodeLast = 0;
 ipcMain.handle("bem:geocode", async (_ev, query) => {
   const q = String(query).trim(), base = geocoderUrl();
   const key = crypto.createHash("sha1").update(`${base}\n${q.toLowerCase()}`).digest("hex").slice(0, 20);
-  const cacheFile = path.join(DATA_DIR, "cache", "geocode", `${key}.json`);
+  const cacheFile = path.join(cacheDir(), "geocode", `${key}.json`);
   try { const st = fs.statSync(cacheFile); if ((Date.now() - st.mtimeMs) / 86400000 <= 30) return { results: JSON.parse(fs.readFileSync(cacheFile, "utf8")) }; } catch { /* not cached yet */ }
   const mine = geocodeTurn.then(async () => { const wait = geocodeLast + 1100 - Date.now(); if (wait > 0) await new Promise((r) => setTimeout(r, wait)); });
   geocodeTurn = mine.catch(() => {});
@@ -368,12 +402,13 @@ ipcMain.handle("bem:geocode", async (_ev, query) => {
 ipcMain.handle("bem:download-weather", async (_ev, url) => {
   const stem = path.basename(String(url)).replace(/\.zip$/i, "").replace(/[^a-z0-9._-]/gi, "_");
   // THE DOWNLOAD LANDS IN Weather/ (2026-09-23): the epw, ddy and stat beside the project's other weather files; the zip in data/cache
-  const epwOf = () => { try { const f = fs.readdirSync(WEATHER_DIR).find((x) => x.toLowerCase() === `${stem.toLowerCase()}.epw`); return f ? path.join(WEATHER_DIR, f) : null; } catch { return null; } };
+  const W = weatherDir();
+  const epwOf = () => { try { const f = fs.readdirSync(W).find((x) => x.toLowerCase() === `${stem.toLowerCase()}.epw`); return f ? path.join(W, f) : null; } catch { return null; } };
   const have = epwOf();
-  if (have) return { epw: have, dir: WEATHER_DIR, cached: true };
+  if (have) return { epw: have, dir: W, cached: true };
   try {
-    fs.mkdirSync(WEATHER_DIR, { recursive: true });
-    const cache = path.join(DATA_DIR, "cache");
+    fs.mkdirSync(W, { recursive: true });
+    const cache = cacheDir();
     fs.mkdirSync(cache, { recursive: true });
     const res = await net.fetch(url, { headers: { "User-Agent": UA } });
     if (!res.ok) return { error: `HTTP ${res.status} from ${url}` };
@@ -384,11 +419,11 @@ ipcMain.handle("bem:download-weather", async (_ev, url) => {
       const out = unzipSync(new Uint8Array(fs.readFileSync(zip)), { filter: (f) => /\.(epw|ddy|stat)$/i.test(f.name) });
       for (const [name, bytes] of Object.entries(out)) {
         const base = name.split(/[\\/]/).pop();
-        if (base && /^[^<>:"|?*]+$/.test(base)) fs.writeFileSync(path.join(WEATHER_DIR, base), bytes);
+        if (base && /^[^<>:"|?*]+$/.test(base)) fs.writeFileSync(path.join(W, base), bytes);
       }
     } catch (e) { return { error: `could not unpack ${path.basename(zip)}: ${e instanceof Error ? e.message : String(e)}` }; }
     const epw = epwOf();
-    return epw ? { epw, dir: WEATHER_DIR, cached: false } : { error: "no .epw inside the zip" };
+    return epw ? { epw, dir: W, cached: false } : { error: "no .epw inside the zip" };
   } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
 });
 // AN ACTUAL-WEATHER FILE MADE IN THE APP (2026-10-07: "How can we fill out the weather with real data?"): the renderer converts NOAA's
@@ -398,12 +433,13 @@ ipcMain.handle("bem:save-weather", async (_ev, stem, epwText, ddyFrom) => {
   const s = String(stem);
   if (!/^[A-Za-z0-9._-]+$/.test(s)) return { error: "the weather file's name holds characters a file name cannot" };
   try {
-    fs.mkdirSync(WEATHER_DIR, { recursive: true });
-    const epw = path.join(WEATHER_DIR, `${s}.epw`);
+    const W = weatherDir();
+    fs.mkdirSync(W, { recursive: true });
+    const epw = path.join(W, `${s}.epw`);
     fs.writeFileSync(epw, String(epwText));
     let ddy = false;
     const src = ddyFrom ? path.resolve(String(ddyFrom)) : null;
-    if (src && path.dirname(src) === WEATHER_DIR && /\.ddy$/i.test(src) && fs.existsSync(src)) { fs.copyFileSync(src, path.join(WEATHER_DIR, `${s}.ddy`)); ddy = true; }
+    if (src && /\.ddy$/i.test(src) && fs.existsSync(src)) { fs.copyFileSync(src, path.join(W, `${s}.ddy`)); ddy = true; }
     return { epw, ddy };
   } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
 });
@@ -488,19 +524,19 @@ ipcMain.handle("bom:pick-csv", async () => {
   return { name: path.basename(p), path: p, text: fs.readFileSync(p, "utf8") };
 });
 ipcMain.handle("bom:save-import", async (_ev, sha12, ext, text) => {
-  const dir = path.join(DATA_DIR, "bom", "imports");
+  const dir = importsDir();
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, `${sha12}.${ext.replace(/[^a-z0-9]/gi, "")}`);
   return saveUser("bills imported", () => { fs.writeFileSync(p, text); return p; });
 });
 ipcMain.handle("bom:read-import", async (_ev, sha12, ext) => {
-  try { return fs.readFileSync(path.join(DATA_DIR, "bom", "imports", `${sha12}.${ext}`), "utf8"); } catch { return null; }
+  try { return fs.readFileSync(path.join(importsDir(), `${sha12}.${ext}`), "utf8"); } catch { return null; }
 });
 ipcMain.handle("bom:load-ledger", async (_ev, sha) => projects.loadLedger("bom", sha));
-ipcMain.handle("bom:save-ledger", async (_ev, sha, json) => saveUser("BOM ledger", () => { projects.saveLedger("bom", sha, json); return STORE_FILE; }));
+ipcMain.handle("bom:save-ledger", async (_ev, sha, json) => saveUser("BOM ledger", () => { projects.saveLedger("bom", sha, json); return storeFile(); }));
 
 // THE PROJECTS AND THEIR VERSIONS (2026-09-30): the lookup on open, the lineage, export and import
-ipcMain.handle("project:info", async () => ({ file: STORE_FILE, projects: projects.projects(), unassigned: projects.unassigned() }));
+ipcMain.handle("project:info", async () => ({ file: storeFile(), projects: projects.projects(), unassigned: projects.unassigned() }));
 ipcMain.handle("project:version", async (_ev, sha) => projects.version(sha));
 ipcMain.handle("project:versions", async (_ev, projectId) => projects.versions(projectId));
 ipcMain.handle("project:version-index", async (_ev, sha) => projects.versionIndex(sha));
@@ -517,12 +553,147 @@ ipcMain.handle("project:import", async () => {
   return saveUser("project imported", () => ({ file: r.filePaths[0], ...projects.importProject(r.filePaths[0]) }));
 });
 
+// ── A PROJECT IS A FOLDER (2026-11-12): created from a template, opened, closed, listed; a template saved from a project ──────────────
+/** a folder copied file by file (an APFS clone where the disk offers one), never over what is there */
+function copyTree(from, to) {
+  if (!fs.existsSync(from)) return;
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    if (e.name === ".DS_Store") continue;
+    const a = path.join(from, e.name), b = path.join(to, e.name);
+    if (e.isDirectory()) copyTree(a, b);
+    else if (!fs.existsSync(b)) fs.copyFileSync(a, b, fs.constants.COPYFILE_FICLONE);
+  }
+}
+/** the templates: the shipped ones (templates/<name>/template.json) and the user's own (<app>/templates/<name>/) */
+function listTemplates() {
+  const out = [];
+  for (const [root, shipped] of [[TEMPLATES_DIR, true], [path.join(APP_DIR, "templates"), false]]) {
+    try {
+      for (const d of fs.readdirSync(root)) {
+        const f = path.join(root, d, "template.json");
+        try { const t = JSON.parse(fs.readFileSync(f, "utf8")); out.push({ id: path.join(root, d), name: t.name ?? d, shipped, sources: t.sources ?? null }); } catch { /* not a template */ }
+      }
+    } catch { /* none */ }
+  }
+  return out;
+}
+const isProject = (dir) => !!dir && fs.existsSync(path.join(dir, "project.sqlite"));
+/** the project an IFC lies in: a folder holding project.sqlite, the IFC in its ifc/ */
+const projectOfIfc = (p) => { const d = path.dirname(path.dirname(path.resolve(String(p)))); return path.basename(path.dirname(path.resolve(String(p)))) === "ifc" && isProject(d) ? d : null; };
+function projectInfo() {
+  if (!PROJECT_DIR || !projects) return null;
+  let sources = null; try { sources = JSON.parse(projects.getMeta("sources") ?? "null"); } catch { sources = null; }
+  const open = projects.getMeta("open_ifc");
+  return { dir: PROJECT_DIR, name: projects.getMeta("name") ?? path.basename(PROJECT_DIR), template: projects.getMeta("template"), sources, openIfc: open ? path.join(PROJECT_DIR, open) : null };
+}
+function remember(dir) {
+  const st = readSettings();
+  st.recent = [dir, ...(st.recent ?? []).filter((x) => x !== dir)].slice(0, 12);
+  st.lastProject = dir;
+  writeSettings(st);
+}
+async function useProject(dir) {
+  PROJECT_DIR = dir;
+  await openProjects();
+  if (dir) remember(dir); else { const st = readSettings(); st.lastProject = null; writeSettings(st); }
+  return projectInfo();
+}
+// what the page knows at its start: the project in force (its folder, name, data-sources record, the IFC it last had open), or null
+ipcMain.on("project:current-sync", (ev) => { ev.returnValue = projectInfo(); });
+ipcMain.handle("project:current", async () => projectInfo());
+ipcMain.handle("project:templates", async () => ({ templates: listTemplates(), defaultTemplate: readSettings().defaultTemplate ?? null, projectsDir: projectsDefaultDir() }));
+ipcMain.handle("project:recent", async () => (readSettings().recent ?? []).filter(isProject).map((d) => ({ dir: d, name: path.basename(d) })));
+ipcMain.handle("project:of-ifc", async (_ev, p) => projectOfIfc(p));
+ipcMain.handle("project:pick-folder", async (_ev, title, defaultPath) => {
+  const r = await dialog.showOpenDialog({ title: String(title || "Choose a folder"), defaultPath: defaultPath || projectsDefaultDir(), properties: ["openDirectory", "createDirectory"] });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+/** NEW PROJECT: the folder made from a template (its tables, library and cache copied; its data-sources record the project's own), the IFCs
+ *  COPIED into ifc/ — the originals stay where they are */
+ipcMain.handle("project:create", async (_ev, o) => { const made = saveUser("the new project", () => {
+  const dir = path.resolve(String(o.dir));
+  if (fs.existsSync(dir) && fs.readdirSync(dir).filter((x) => x !== ".DS_Store").length) throw new Error(`${dir} is not empty — a new project needs an empty or new folder`);
+  const tplDir = o.template ? path.resolve(String(o.template)) : path.join(TEMPLATES_DIR, "standard");
+  const tpl = JSON.parse(fs.readFileSync(path.join(tplDir, "template.json"), "utf8"));
+  for (const sub of ["tables", "library", "cache"]) copyTree(path.join(tplDir, sub), path.join(dir, sub));
+  for (const sub of ["ifc", "weather", "data", "imports"]) fs.mkdirSync(path.join(dir, sub), { recursive: true });
+  const copied = [];
+  for (const src of o.ifcs ?? []) {
+    const name = path.basename(String(src));
+    fs.copyFileSync(String(src), path.join(dir, "ifc", name), fs.constants.COPYFILE_FICLONE);
+    const side = `${src}.lineage.json`; if (fs.existsSync(side)) fs.copyFileSync(side, path.join(dir, "ifc", `${name}.lineage.json`));
+    copied.push(name);
+  }
+  return { dir, tpl, copied };
+  });
+  const { dir, tpl, copied } = made;
+  PROJECT_DIR = dir; await openProjects();
+  projects.setMeta("name", String(o.name || path.basename(dir)));
+  projects.setMeta("template", String(tpl.name ?? "standard"));
+  projects.setMeta("sources", JSON.stringify(tpl.sources ?? null));
+  if (copied[0]) projects.setMeta("open_ifc", path.join("ifc", copied[0]));
+  remember(dir);
+  return projectInfo();
+});
+ipcMain.handle("project:open", async (_ev, dir) => {
+  const d = dir ? path.resolve(String(dir)) : null;
+  if (d && !isProject(d)) throw new Error(`${d} holds no project.sqlite — not a project folder`);
+  return await useProject(d);
+});
+/** IFCs added to the open project: copied into its ifc/ (a site or MEP file beside the building) */
+ipcMain.handle("project:add-ifcs", async (_ev, files) => saveUser("IFC files copied into the project", () => {
+  if (!PROJECT_DIR) throw new Error("no project is open");
+  const out = [];
+  for (const f of files) { const t = path.join(PROJECT_DIR, "ifc", path.basename(String(f))); if (!fs.existsSync(t)) fs.copyFileSync(String(f), t, fs.constants.COPYFILE_FICLONE); out.push(t); }
+  return out;
+}));
+ipcMain.handle("project:set-open-ifc", async (_ev, p) => { if (PROJECT_DIR && projects && p && path.resolve(String(p)).startsWith(PROJECT_DIR + path.sep)) projects.setMeta("open_ifc", path.relative(PROJECT_DIR, path.resolve(String(p)))); return true; });
+ipcMain.handle("project:set-sources", async (_ev, json) => saveUser("the project's data sources", () => { if (!PROJECT_DIR) throw new Error("no project is open"); projects.setMeta("sources", JSON.stringify(json)); return projectInfo(); }));
+/** SAVE AS TEMPLATE: the project's data-sources record, tables, library and cache — never its IFCs, rulings or derived data — as a template
+ *  of the user's own (<app>/templates/<name>), offered for new projects; `asDefault` makes it the default */
+ipcMain.handle("project:save-template", async (_ev, name, asDefault) => saveUser("the template", () => {
+  if (!PROJECT_DIR) throw new Error("no project is open");
+  const safe = String(name).trim().replace(/[\\/:*?"<>|]/g, "-");
+  if (!safe) throw new Error("a template needs a name");
+  const t = path.join(APP_DIR, "templates", safe);
+  if (fs.existsSync(t)) throw new Error(`a template named ${safe} exists — choose another name`);
+  for (const sub of ["tables", "library", "cache"]) copyTree(path.join(PROJECT_DIR, sub), path.join(t, sub));
+  let sources = null; try { sources = JSON.parse(projects.getMeta("sources") ?? "null"); } catch { sources = null; }
+  fs.writeFileSync(path.join(t, "template.json"), JSON.stringify({ name: safe, sources: sources ? { ...sources, template: safe } : null }, null, 2));
+  if (asDefault) { const st = readSettings(); st.defaultTemplate = t; writeSettings(st); }
+  return t;
+}));
+ipcMain.handle("project:set-default-template", async (_ev, t) => { const st = readSettings(); st.defaultTemplate = t || null; writeSettings(st); return true; });
+// THE EXAMPLES (2026-11-13, the user: "use Example folder in Projects folder to hold example ifc files"): a shipped example's IFC
+// files (and its README, which carries the licence) are copied into <projects folder>/Example/ — never over a file already there —
+// and a new project is made from them there, its folder named for the IFC. The install folder is never written.
+ipcMain.handle("project:example", async (_e, name) => {
+  const src = path.join(EXAMPLES_DIR, String(name));
+  if (path.dirname(src) !== EXAMPLES_DIR || !fs.existsSync(src)) throw new Error(`no example named ${name}`);
+  const dest = path.join(projectsDefaultDir(), "Example");
+  fs.mkdirSync(dest, { recursive: true });
+  const ifcs = [];
+  for (const f of fs.readdirSync(src)) {
+    const to = path.join(dest, /^readme\.md$/i.test(f) ? `${name} README.md` : f);
+    if (!/\.ifc$/i.test(f) && !/^readme\.md$/i.test(f)) continue;
+    if (!fs.existsSync(to)) fs.copyFileSync(path.join(src, f), to);
+    if (/\.ifc$/i.test(f)) ifcs.push(to);
+  }
+  return { dir: dest, ifcs };
+});
+ipcMain.handle("project:examples", async () => { try { return fs.readdirSync(EXAMPLES_DIR).filter((d) => fs.statSync(path.join(EXAMPLES_DIR, d)).isDirectory()).map((d) => ({ name: d, ifcs: fs.readdirSync(path.join(EXAMPLES_DIR, d)).filter((f) => /\.ifc$/i.test(f)).map((f) => path.join(EXAMPLES_DIR, d, f)) })); } catch { return []; } });
+ipcMain.handle("project:reveal", async () => { if (PROJECT_DIR) shell.showItemInFolder(path.join(PROJECT_DIR, "project.sqlite")); return !!PROJECT_DIR; });
+
 explainWindow.register(app, () => mainWin);
 app.whenReady().then(async () => {
-  try { await openProjects(); }
+  // the project last open, when it is still there (ENTHALIX_PROJECT names one — a test, the smoke run)
+  const last = process.env.ENTHALIX_PROJECT ? path.resolve(process.env.ENTHALIX_PROJECT) : readSettings().lastProject;
+  if (isProject(last)) PROJECT_DIR = last;
+  try { await openProjects(); if (PROJECT_DIR) remember(PROJECT_DIR); }
   catch (e) {
     // no store, no ledgers: say so plainly and load nothing rather than run with rulings that cannot be saved
-    dialog.showErrorBox("BIM-BEM-BOM — the project store could not be opened", `${STORE_FILE}\n\n${e instanceof Error ? e.message : String(e)}`);
+    dialog.showErrorBox("BIM-BEM-BOM — the project store could not be opened", `${storeFile()}\n\n${e instanceof Error ? e.message : String(e)}`);
     app.quit(); return;
   }
   // THE MAP TILES name the app (OSMF tile usage policy: "a clear, unique User-Agent string that names your app"): the tile images are

@@ -236,7 +236,17 @@ function openStore(file, SQL) {
     flush();
     return counts;
   }
-  return { file, flush, loadLedger, saveLedger, listHistory, readHistory, ensureProject, registerVersion, version, versionIndex, versions, project, projects, unassigned, migrateFromFiles, exportProject, importProject, close: () => db.close() };
+  /** THE PROJECT'S OWN RECORD (2026-11-12, a project is a folder): its name, the template it started from, its data-sources record
+   *  (JSON) and the IFC it last had open — kept in meta, beside the schema version */
+  function getMeta(key) { const r = one("SELECT value FROM meta WHERE key = ?", [String(key)]); return r ? String(r.value) : null; }
+  function setMeta(key, value) { if (value === null || value === undefined) run("DELETE FROM meta WHERE key = ?", [String(key)]); else run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [String(key), String(value)]); flush(); }
+  /** every ledger as a file: projects/<project or unassigned>/<sha>/<kind>.json */
+  function ledgerFiles() {
+    return all("SELECT l.sha, l.kind, l.json, v.project_id FROM ledgers l LEFT JOIN versions v ON v.sha = l.sha ORDER BY l.sha, l.kind")
+      .map((r) => ({ rel: path.join("projects", r.project_id || "unassigned", r.sha, `${r.kind}.json`), bytes: Buffer.from(r.json) }));
+  }
+
+  return { file, flush, loadLedger, saveLedger, listHistory, readHistory, ensureProject, registerVersion, version, versionIndex, versions, project, projects, unassigned, migrateFromFiles, exportProject, importProject, ledgerFiles, getMeta, setMeta, close: () => db.close() };
 }
 
 module.exports = { openStore, SCHEMA_VERSION, KINDS, HISTORY_KEEP };

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Enthalix LLC
 // THE ENERGY CODE'S VALUES, TYPED (user, 2026-10-15: "We should provide the user with an input screen for code related necessary values
-// (name, wall/roof/floor values etc)"): what SITE › energy code › Edit values reads and writes — the same data/energy-codes/*.csv the
+// (name, wall/roof/floor values etc)"): what SITE › energy code › Edit values reads and writes — the same tables/energy-codes/*.csv the
 // app reads at start, so there is one place the values live. One edition, one climate-zone row at a time; every other row of the files
 // is kept as it was. Values are stored as the README states them (U in Btu/h·ft²·°F, R in h·ft²·°F/Btu, depth in ft, thermostat in
 // °F); a value without a citation is refused, an empty one is "not entered" (the SHGC's empty is the code's NR). Pure: no I/O.

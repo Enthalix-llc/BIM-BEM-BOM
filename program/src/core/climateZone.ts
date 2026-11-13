@@ -13,6 +13,48 @@ export const COUNTIES_CACHE = "us-counties-20m.geojson";
 /** where the user reads their county's zone: the code's climate-zone table, free and read-only on the publisher's site */
 export const ZONE_TABLE_URL = "https://codes.iccsafe.org/";
 
+/** A COUNTY TABLE, named by a project's data sources (2026-11-12): the DOE Building America layout — State, State FIPS, County FIPS,
+ *  IECC Climate Zone, IECC Moisture Regime, BA Climate Zone, County Name (the 2015 "Guide to Determining Climate Regions by County").
+ *  None ships with the program: a project names a file in the home folder or a URL fetched once */
+export interface CountyZone {
+  /** five-digit state + county FIPS */
+  fips: string;
+  state: string;
+  county: string;
+  /** "4A" — the IECC zone number with its moisture letter (none for the marine/dry N/A rows) */
+  zone: string;
+  number: string;
+  moisture: string;
+  /** the Building America region: "Mixed-Humid" */
+  ba: string;
+}
+
+/** the county table, keyed by FIPS */
+export function parseCountyZones(csv: string): Map<string, CountyZone> {
+  const out = new Map<string, CountyZone>();
+  const lines = csv.split(/\r?\n/);
+  const head = (lines[0] ?? "").split(",").map((x) => x.trim().toLowerCase());
+  const col = (name: string): number => head.findIndex((h) => h === name.toLowerCase());
+  const iState = col("State"), iSF = col("State FIPS"), iCF = col("County FIPS"), iZone = col("IECC Climate Zone"), iMoist = col("IECC Moisture Regime"), iBa = col("BA Climate Zone"), iName = col("County Name");
+  for (const line of lines.slice(1)) {
+    if (!line.trim()) continue;
+    const f = line.split(",").map((x) => x.trim());
+    const sf = (f[iSF] ?? "").padStart(2, "0"), cf = (f[iCF] ?? "").padStart(3, "0");
+    if (!/^\d{2}$/.test(sf) || !/^\d{3}$/.test(cf)) continue;
+    const number = f[iZone] ?? "", moisture = f[iMoist] ?? "";
+    out.set(sf + cf, { fips: sf + cf, state: f[iState] ?? "", county: f[iName] ?? "", zone: number + (/^[A-C]$/i.test(moisture) ? moisture.toUpperCase() : ""), number, moisture, ba: f[iBa] ?? "" });
+  }
+  return out;
+}
+
+/** the county a position lies in, with its zone READ from a county table — the moisture and Building America region too */
+export function climateZoneFromTable(lat: number, lon: number, counties: CountyFeature[], zones: Map<string, CountyZone>): CountyZoneRead | null {
+  const c = countyAt(lat, lon, counties);
+  if (!c) return null;
+  const z = zones.get(c.fips);
+  return { fips: c.fips, county: z?.county || c.name, state: z?.state || (STATE_BY_FIPS[c.stateFips] ?? c.stateFips), zone: z?.zone ?? "", moisture: z?.moisture ?? "", ba: z?.ba ?? "" };
+}
+
 /** the states and territories by their two-digit FIPS code (US Census) — the code's tables and a state's adoptions name the state */
 export const STATE_BY_FIPS: Record<string, string> = {
   "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA", "08": "CO", "09": "CT", "10": "DE", "11": "DC", "12": "FL", "13": "GA",

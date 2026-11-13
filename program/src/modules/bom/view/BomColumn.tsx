@@ -73,7 +73,7 @@ function UtilitySearch({ place }: { place?: BomColumnProps["place"] }): React.Re
         <div>{utilityLinks(zip, place?.state ?? null, place?.county ?? null).map((l) => (
           <button key={l.label} className="chip" title={`${l.tip}\n${l.url}`} onClick={() => void window.bem.openBrowser(l.url)}>{l.label} ↗</button>
         ))}</div>
-        <div className="muted">enter what you find as a card of your own: data/tariffs/tariff.json, from references/tariffs/tariff.template.json</div>
+        <div className="muted">enter what you find as a card of your own: the project's tables/tariffs/tariff.json, from references/tariffs/tariff.template.json</div>
       </>}
     </div>
   );

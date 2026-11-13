@@ -6,6 +6,7 @@
 // the upstream content it was built from, amber when the upstream was
 // rebuilt since, hollow when the module has not been built yet.
 
+import { projectBadge } from "../core/projectSources.js";
 import { MODULES, type AppModule } from "./registry.js";
 
 export type DotState = "ok" | "stale" | "absent";
@@ -32,6 +33,7 @@ export function Rail(props: {
           </button>
         );
       })}
+      {projectBadge() && <span className="railHouse" title={`the open project, ${window.projectNow?.name ?? ""}, carries this mark`}>{projectBadge()}</span>}
     </nav>
   );
 }

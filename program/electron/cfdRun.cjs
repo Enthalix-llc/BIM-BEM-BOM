@@ -56,10 +56,11 @@ function findOpenFoam() {
 }
 
 function register(ipcMain, { dataDir }) {
-  const runs = path.join(dataDir, "cfd", "runs");
+  // the data folder of the project in force (2026-11-12: a project is a folder) — asked at each use, never kept
+  const runs = () => path.join(typeof dataDir === "function" ? dataDir() : dataDir, "cfd", "runs");
   const runDir = (stamp) => {
     if (!/^[0-9A-Za-z_-]+$/.test(String(stamp))) throw new Error("bad stamp");
-    return path.join(runs, String(stamp));
+    return path.join(runs(), String(stamp));
   };
   const inRun = (stamp, rel) => {
     const d = runDir(stamp), p = path.resolve(d, String(rel || "."));

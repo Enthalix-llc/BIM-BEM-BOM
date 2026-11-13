@@ -10,8 +10,8 @@ are not any utility's rates. To find your own utility and its schedule, use
 **Search…** in BOM › 2 · tariff & PV. It opens the U.S. Utility Rate Database
 (OpenEI) for the site's ZIP code, and a web search for the county's utility.
 
-1. Copy `tariff.template.json` to `data/tariffs/tariff.json` (create the
-   folder). The `data/` folder holds your own files and is never committed.
+1. Copy `tariff.template.json` to `tables/tariffs/tariff.json` in your project's
+   folder (create the folder).
 2. Open your utility's published residential rate schedule and its net metering
    schedule, usually PDFs on the utility's website.
 3. Fill in every `value`, with the schedule's section in `cite` and the

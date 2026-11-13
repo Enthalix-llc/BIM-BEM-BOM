@@ -69,8 +69,41 @@ export function parseStationListing(text: string): Array<StationFile & { wmo: st
   return out;
 }
 
+/** A SECOND LISTING, named by a project's data sources (2026-11-12): climate.onebuilding.org's KML of every USA TMYx file it serves —
+ *  the station, WMO number and position, elevation, time zone, the ASHRAE climate zone, HDD/CDD and the zip's URL (13,356 placemarks,
+ *  measured 2026-09-07). Read only when a project names it; its files keep their own terms (climate.onebuilding.org) */
+export const USA_TMYX_KML = "https://climate.onebuilding.org/sources/Region4_USA_TMYx_EPW_Processing_locations.kml";
+export const TMYX_CACHE = "weather-stations-usa-tmyx.kml";
+/** every placemark of the KML as one station file; the first placemark (the region's own marker) has no URL and is skipped */
+export function parseStationKml(text: string): Array<StationFile & { wmo: string; name: string; state: string; latitude: number; longitude: number; elevationM: number; timeZone: number | null; climateZone: string; hdd18: number | null; cdd10: number | null }> {
+  const out: ReturnType<typeof parseStationKml> = [];
+  const re = /<Placemark>\s*<name>([^<]*)<\/name>\s*<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>[\s\S]*?<coordinates>([^<]*)<\/coordinates>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const d = m[2]!;
+    const url = /URL (https?:\/\/[^\s<]+)/.exec(d)?.[1];
+    if (!url) continue;
+    const title = /<b>([^<]*)<\/b><\/td>/.exec(d)?.[1] ?? "";          // "USA <state> <station>.<WMO> TMYx.<period>"
+    const stem = url.split("/").pop()!.replace(/\.zip$/i, "");
+    const t = /^(\w+)\s+(\w+)\s+(.+?)\.(\d{6})\s+(\S+)/.exec(title);
+    const wmo = /WMO <b>(\d+)/.exec(d)?.[1] ?? t?.[4] ?? "";
+    const c = m[3]!.trim().split(",").map(Number);
+    if (!Number.isFinite(c[0]!) || !Number.isFinite(c[1]!)) continue;
+    const period = (t?.[5] ?? "").replace(/^TMYx\.?/, "") || "TMYx";
+    out.push({
+      wmo, name: t?.[3] ?? m[1]!.trim(), state: t?.[2] ?? "",
+      latitude: c[1]!, longitude: c[0]!, elevationM: c[2] ?? 0,
+      timeZone: num(/GMT <b>([-\d.]+)/.exec(d)?.[1]),
+      climateZone: (/Climate Zone <b>([^<]*)/.exec(d)?.[1] ?? "").trim(),
+      hdd18: num(/HDD18 <b>(\d+)/.exec(d)?.[1]), cdd10: num(/CDD10 <b>(\d+)/.exec(d)?.[1]),
+      period, url, source: (/Data Source ([^<]*)/.exec(d)?.[1] ?? "").trim(), stem,
+    });
+  }
+  return out;
+}
+
 /** one row per station AND position — a listing may place one station's files apart, and that is its word — its files by period */
-export function groupStations(rows: ReturnType<typeof parseStationListing>): Station[] {
+export function groupStations(rows: ReturnType<typeof parseStationListing> | ReturnType<typeof parseStationKml>): Station[] {
   const by = new Map<string, Station>();
   for (const r of rows) {
     const k = `${r.wmo}|${r.name}|${r.latitude.toFixed(3)}|${r.longitude.toFixed(3)}`;
