@@ -46,7 +46,7 @@ export function NewProjectDialog(p: { ifc: string | null; siblings: string[]; on
       <div className="menuScrim dialogScrim" onPointerDown={p.onCancel} />
       <div className="dialog newProject" role="dialog" aria-label="New project">
         <div className="dialogHead">new project</div>
-        <div className="idfInfo">A project is a folder holding everything it uses: its rulings (project.sqlite), its IFC files, weather, tables, library and results. The IFC files you pick are <b>copied</b> into it; the originals stay as they are.</div>
+        <div className="idfInfo">A project is a folder holding everything it uses: its rulings (project.sqlite), its IFC files, weather, tables, library and results. The IFC files you pick are <b>copied</b> into it; the originals stay as they are. A file you worked on before project folders (0.3.0 and earlier) brings its rulings, history, libraries, bill imports and weather with it.</div>
         <label className="lensRow">name <input value={name} onChange={(e) => setName(e.target.value)} autoFocus style={{ flex: 1 }} /></label>
         <div className="lensRow">folder <code style={{ flex: 1 }}>{dir || "—"}</code>
           <button className="qaBtn" onClick={() => void window.projectFolder.pickFolder("Where the project folder goes", dirRoot).then((d) => { if (d) setDirRoot(d); })}>Choose…</button></div>

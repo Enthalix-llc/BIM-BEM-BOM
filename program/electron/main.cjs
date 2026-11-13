@@ -587,6 +587,39 @@ function projectInfo() {
   const open = projects.getMeta("open_ifc");
   return { dir: PROJECT_DIR, name: projects.getMeta("name") ?? path.basename(PROJECT_DIR), template: projects.getMeta("template"), sources, openIfc: open ? path.join(PROJECT_DIR, open) : null };
 }
+/** WORK FROM BEFORE PROJECT FOLDERS (0.3.0 and earlier kept every ruling in the app's own projects.sqlite, the libraries, bill imports
+ *  and weather in its own folder): an IFC copied into a new project brings its IfcProject's versions, ledgers and history from that
+ *  store when the store knows the file by its sha, and with them the user's libraries, bill imports and weather files (copied, the
+ *  project's own kept). The app's folder is read, never changed. Said in the launch log. */
+function carryFromAppStore(ifcs) {
+  const old = path.join(APP_DIR, "projects.sqlite");
+  if (!PROJECT_DIR || !fs.existsSync(old) || path.resolve(old) === path.resolve(storeFile())) return null;
+  let src = null;
+  const done = new Set(), counts = { projects: 0, versions: 0, ledgers: 0, history: 0 };
+  try {
+    src = projectStore.openStore(old, SQL_MODULE);
+    for (const f of ifcs) {
+      const sha = crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+      const v = src.version(sha);
+      if (!v || !v.projectId || done.has(v.projectId)) continue;
+      done.add(v.projectId);
+      const tmp = path.join(PROJECT_DIR, "cache", `.carry-${v.projectId}.bimproject`);
+      fs.mkdirSync(path.dirname(tmp), { recursive: true });
+      try { src.exportProject(v.projectId, tmp); const c = projects.importProject(tmp); for (const k of Object.keys(counts)) counts[k] += c[k] ?? 0; }
+      finally { fs.rmSync(tmp, { force: true }); }
+    }
+  } catch (e) { console.warn(`[bim] the earlier work in ${old} could not be carried: ${e instanceof Error ? e.message : String(e)}`); return null; }
+  finally { try { src?.close(); } catch { /* read only */ } }
+  if (!done.size) return null;
+  const oldData = path.join(NO_PROJECT_DIR, "data");
+  const keep = (a, b) => { if (fs.existsSync(a) && !fs.existsSync(b)) { fs.mkdirSync(path.dirname(b), { recursive: true }); fs.copyFileSync(a, b, fs.constants.COPYFILE_FICLONE); } };
+  for (const n of LIBRARY_NAMES) keep(path.join(oldData, n), path.join(PROJECT_DIR, "library", n));
+  for (const [from, to] of [[path.join(oldData, "bom", "imports"), path.join(PROJECT_DIR, "imports", "bom")], [path.join(NO_PROJECT_DIR, "Weather"), path.join(PROJECT_DIR, "weather")]]) {
+    if (fs.existsSync(from)) for (const n of fs.readdirSync(from)) if (fs.statSync(path.join(from, n)).isFile()) keep(path.join(from, n), path.join(to, n));
+  }
+  console.log(`[bim] carried from ${old}: ${counts.projects} project(s), ${counts.versions} versions, ${counts.ledgers} ledgers, ${counts.history} history; libraries, bill imports and weather copied`);
+  return counts;
+}
 function remember(dir) {
   const st = readSettings();
   st.recent = [dir, ...(st.recent ?? []).filter((x) => x !== dir)].slice(0, 12);
@@ -629,6 +662,7 @@ ipcMain.handle("project:create", async (_ev, o) => { const made = saveUser("the 
   });
   const { dir, tpl, copied } = made;
   PROJECT_DIR = dir; await openProjects();
+  carryFromAppStore(copied.map((n) => path.join(dir, "ifc", n)));
   projects.setMeta("name", String(o.name || path.basename(dir)));
   projects.setMeta("template", String(tpl.name ?? "standard"));
   projects.setMeta("sources", JSON.stringify(tpl.sources ?? null));
