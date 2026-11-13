@@ -112,6 +112,11 @@ export interface Change {
   prevId: number | null; nextId: number | null;
   /** what moved, in words: `name "a" → "b"`, `geometry: area 12.30 → 12.41 m², moved 0.030 m` */
   diffs: string[];
+  /** the same, field by field, with the values compared (2026-11-13, the import review keys a ruling by subject + field and
+   *  asks again when the file's value moves on); an added or removed subject is one field, `presence` */
+  fields: Array<{ field: string; prev: string; next: string }>;
+  /** the IFC class of an element, for grouping the review */
+  ifcClass?: string;
 }
 export interface FileDiff {
   prevSha: string; nextSha: string;
@@ -139,39 +144,40 @@ export function diffIndex(prev: FileIndex, next: FileIndex): FileDiff {
   let common = 0;
   for (const [k, a] of pe) {
     const b = ne.get(k);
-    if (!b) { goneElements.add(k); changes.push({ kind: "removed", what: "element", key: k, label: elementLabel(a), prevId: a.id, nextId: null, diffs: [] }); continue; }
+    if (!b) { goneElements.add(k); changes.push({ kind: "removed", what: "element", key: k, label: elementLabel(a), prevId: a.id, nextId: null, diffs: [], fields: [{ field: "presence", prev: "present", next: "absent" }], ifcClass: a.ifcClass }); continue; }
     common++; elementIds.set(a.id, b.id);
-    const diffs: string[] = [];
-    for (const f of Object.keys(a.word)) if (a.word[f] !== b.word[f]) diffs.push(`${f} ${a.word[f] ? `"${a.word[f]}"` : "—"} → ${b.word[f] ? `"${b.word[f]}"` : "—"}`);
+    const diffs: string[] = [], fields: Change["fields"] = [];
+    for (const f of Object.keys(a.word)) if (a.word[f] !== b.word[f]) { diffs.push(`${f} ${a.word[f] ? `"${a.word[f]}"` : "—"} → ${b.word[f] ? `"${b.word[f]}"` : "—"}`); fields.push({ field: f, prev: a.word[f] ?? "", next: b.word[f] ?? "" }); }
     if (a.geom !== b.geom) {
       const moved = a.bbox && b.bbox ? Math.max(dist(a.bbox.slice(0, 3), b.bbox.slice(0, 3)), dist(a.bbox.slice(3), b.bbox.slice(3))) : 0;
       diffs.push(`geometry: area ${a.areaM2.toFixed(2)} → ${b.areaM2.toFixed(2)} m² · faces ${a.faces} → ${b.faces} · extent moved ${moved.toFixed(3)} m`);
+      fields.push({ field: "geometry", prev: a.geom, next: b.geom });
     }
-    if (diffs.length) { changedElements.add(k); changes.push({ kind: "changed", what: "element", key: k, label: elementLabel(b), prevId: a.id, nextId: b.id, diffs }); }
+    if (diffs.length) { changedElements.add(k); changes.push({ kind: "changed", what: "element", key: k, label: elementLabel(b), prevId: a.id, nextId: b.id, diffs, fields, ifcClass: b.ifcClass }); }
     else unchanged++;
   }
-  for (const [k, b] of ne) if (!pe.has(k)) changes.push({ kind: "added", what: "element", key: k, label: elementLabel(b), prevId: null, nextId: b.id, diffs: [] });
+  for (const [k, b] of ne) if (!pe.has(k)) changes.push({ kind: "added", what: "element", key: k, label: elementLabel(b), prevId: null, nextId: b.id, diffs: [], fields: [{ field: "presence", prev: "absent", next: "present" }], ifcClass: b.ifcClass });
   const pt = new Map(prev.types.map((t) => [t.name, t])), nt = new Map(next.types.map((t) => [t.name, t]));
   for (const [k, a] of pt) {
     const b = nt.get(k);
-    if (!b) { goneTypes.add(k); changes.push({ kind: "removed", what: "type", key: k, label: k, prevId: a.id, nextId: null, diffs: [] }); continue; }
-    const diffs: string[] = [];
-    if ((a.uWm2k ?? null) !== (b.uWm2k ?? null)) diffs.push(`stated U ${a.uWm2k === null ? "—" : a.uWm2k.toFixed(3)} → ${b.uWm2k === null ? "—" : b.uWm2k.toFixed(3)} W/m²K`);
-    if (a.layers !== b.layers) diffs.push(`layers ${a.layers || "—"} → ${b.layers || "—"}`);
-    if (diffs.length) { changedTypes.add(k); changes.push({ kind: "changed", what: "type", key: k, label: k, prevId: a.id, nextId: b.id, diffs }); }
+    if (!b) { goneTypes.add(k); changes.push({ kind: "removed", what: "type", key: k, label: k, prevId: a.id, nextId: null, diffs: [], fields: [{ field: "presence", prev: "present", next: "absent" }] }); continue; }
+    const diffs: string[] = [], fields: Change["fields"] = [];
+    if ((a.uWm2k ?? null) !== (b.uWm2k ?? null)) { diffs.push(`stated U ${a.uWm2k === null ? "—" : a.uWm2k.toFixed(3)} → ${b.uWm2k === null ? "—" : b.uWm2k.toFixed(3)} W/m²K`); fields.push({ field: "stated U", prev: a.uWm2k === null ? "" : String(a.uWm2k), next: b.uWm2k === null ? "" : String(b.uWm2k) }); }
+    if (a.layers !== b.layers) { diffs.push(`layers ${a.layers || "—"} → ${b.layers || "—"}`); fields.push({ field: "layers", prev: a.layers, next: b.layers }); }
+    if (diffs.length) { changedTypes.add(k); changes.push({ kind: "changed", what: "type", key: k, label: k, prevId: a.id, nextId: b.id, diffs, fields }); }
   }
-  for (const [k, b] of nt) if (!pt.has(k)) changes.push({ kind: "added", what: "type", key: k, label: k, prevId: null, nextId: b.id, diffs: [] });
+  for (const [k, b] of nt) if (!pt.has(k)) changes.push({ kind: "added", what: "type", key: k, label: k, prevId: null, nextId: b.id, diffs: [], fields: [{ field: "presence", prev: "absent", next: "present" }] });
   const ps = new Map(prev.spaces.map((s) => [idKey(s), s])), ns = new Map(next.spaces.map((s) => [idKey(s), s]));
   for (const [k, a] of ps) {
     const b = ns.get(k);
-    if (!b) { goneSpaces.add(k); changes.push({ kind: "removed", what: "space", key: k, label: `room ${a.name}`, prevId: a.id, nextId: null, diffs: [] }); continue; }
+    if (!b) { goneSpaces.add(k); changes.push({ kind: "removed", what: "space", key: k, label: `room ${a.name}`, prevId: a.id, nextId: null, diffs: [], fields: [{ field: "presence", prev: "present", next: "absent" }] }); continue; }
     spaceIds.set(a.id, b.id);
-    const diffs: string[] = [];
-    if (a.name !== b.name) diffs.push(`name "${a.name}" → "${b.name}"`);
-    if (a.geom !== b.geom) diffs.push(`geometry: area ${a.areaM2.toFixed(2)} → ${b.areaM2.toFixed(2)} m² · faces ${a.faces} → ${b.faces}`);
-    if (diffs.length) { changedSpaces.add(k); changes.push({ kind: "changed", what: "space", key: k, label: `room ${b.name}`, prevId: a.id, nextId: b.id, diffs }); }
+    const diffs: string[] = [], fields: Change["fields"] = [];
+    if (a.name !== b.name) { diffs.push(`name "${a.name}" → "${b.name}"`); fields.push({ field: "name", prev: a.name, next: b.name }); }
+    if (a.geom !== b.geom) { diffs.push(`geometry: area ${a.areaM2.toFixed(2)} → ${b.areaM2.toFixed(2)} m² · faces ${a.faces} → ${b.faces}`); fields.push({ field: "geometry", prev: a.geom, next: b.geom }); }
+    if (diffs.length) { changedSpaces.add(k); changes.push({ kind: "changed", what: "space", key: k, label: `room ${b.name}`, prevId: a.id, nextId: b.id, diffs, fields }); }
   }
-  for (const [k, b] of ns) if (!ps.has(k)) changes.push({ kind: "added", what: "space", key: k, label: `room ${b.name}`, prevId: null, nextId: b.id, diffs: [] });
+  for (const [k, b] of ns) if (!ps.has(k)) changes.push({ kind: "added", what: "space", key: k, label: `room ${b.name}`, prevId: null, nextId: b.id, diffs: [], fields: [{ field: "presence", prev: "absent", next: "present" }] });
   return { prevSha: prev.sha, nextSha: next.sha, overlap: common / Math.max(1, pe.size, ne.size), unchanged, changes, elementIds, spaceIds, changedElements, goneElements, changedTypes, goneTypes, changedSpaces, goneSpaces, roomNames: new Set(next.spaces.map((s) => s.name)) };
 }
 
@@ -194,6 +200,8 @@ export interface RulingCase {
   subjects: string[];
   verdict: Verdict;
   why: string;
+  /** the changes it rides on, as `${what}:${key}` (2026-11-13: the import review puts a ruling beside the difference under it) */
+  on?: string[];
 }
 export interface Ledgers { corrections: CorrectionsLedger | null; bem: BemLedger | null; bom: unknown | null }
 export interface CarryRecord {
@@ -216,33 +224,35 @@ export function carryRulings(prev: FileIndex, next: FileIndex, diff: FileDiff, o
   const pe = new Map(prev.elements.map((e) => [e.id, e])), ps = new Map(prev.spaces.map((s) => [s.id, s]));
   const ne = new Map(next.elements.map((e) => [e.id, e]));
   const cases: RulingCase[] = [];
-  const elCase = (ids: number[]): { verdict: Verdict; why: string; subjects: string[] } => {
-    const subjects: string[] = []; let verdict: Verdict = "carried"; const whys: string[] = [];
+  const elCase = (ids: number[]): { verdict: Verdict; why: string; subjects: string[]; on: string[] } => {
+    const subjects: string[] = []; let verdict: Verdict = "carried"; const whys: string[] = []; const on: string[] = [];
     for (const id of ids) {
       const e = pe.get(id); const k = e ? idKey(e) : `#${id}`;
+      if (e && (diff.goneElements.has(k) || diff.changedElements.has(k))) on.push(`element:${k}`);
       subjects.push(e ? elementLabel(e) : `#${id}`);
       if (!e || diff.goneElements.has(k)) { verdict = "gone"; whys.push(`${e ? elementLabel(e) : `#${id}`} is not in the file`); }
       else if (diff.changedElements.has(k) && verdict !== "gone") { verdict = "changed"; whys.push(...(diff.changes.find((c) => c.what === "element" && c.key === k)?.diffs ?? [])); }
     }
-    return { verdict, why: whys.join("; "), subjects };
+    return { verdict, why: whys.join("; "), subjects, on };
   };
-  const spCase = (ids: number[]): { verdict: Verdict; why: string; subjects: string[] } => {
-    const subjects: string[] = []; let verdict: Verdict = "carried"; const whys: string[] = [];
+  const spCase = (ids: number[]): { verdict: Verdict; why: string; subjects: string[]; on: string[] } => {
+    const subjects: string[] = []; let verdict: Verdict = "carried"; const whys: string[] = []; const on: string[] = [];
     for (const id of ids) {
       const s = ps.get(id); const k = s ? idKey(s) : `#${id}`;
+      if (s && (diff.goneSpaces.has(k) || diff.changedSpaces.has(k))) on.push(`space:${k}`);
       subjects.push(s ? `room ${s.name}` : `room #${id}`);
       if (!s || diff.goneSpaces.has(k)) { verdict = "gone"; whys.push(`room ${s?.name ?? `#${id}`} is not in the file`); }
       else if (diff.changedSpaces.has(k) && verdict !== "gone") { verdict = "changed"; whys.push(...(diff.changes.find((c) => c.what === "space" && c.key === k)?.diffs ?? [])); }
     }
-    return { verdict, why: whys.join("; "), subjects };
+    return { verdict, why: whys.join("; "), subjects, on };
   };
   const nameCase = (names: string[]): { verdict: Verdict; why: string; subjects: string[] } => {
     const missing = names.filter((n) => !diff.roomNames.has(n));
     return { verdict: missing.length ? "gone" : "carried", why: missing.map((n) => `room ${n} is not in the file`).join("; "), subjects: names.map((n) => `room ${n}`) };
   };
-  const typeCase = (name: string): { verdict: Verdict; why: string; subjects: string[] } => {
-    if (diff.goneTypes.has(name)) return { verdict: "gone", why: `type ${name} is not in the file`, subjects: [`type ${name}`] };
-    if (diff.changedTypes.has(name)) return { verdict: "changed", why: (diff.changes.find((c) => c.what === "type" && c.key === name)?.diffs ?? []).join("; "), subjects: [`type ${name}`] };
+  const typeCase = (name: string): { verdict: Verdict; why: string; subjects: string[]; on?: string[] } => {
+    if (diff.goneTypes.has(name)) return { verdict: "gone", why: `type ${name} is not in the file`, subjects: [`type ${name}`], on: [`type:${name}`] };
+    if (diff.changedTypes.has(name)) return { verdict: "changed", why: (diff.changes.find((c) => c.what === "type" && c.key === name)?.diffs ?? []).join("; "), subjects: [`type ${name}`], on: [`type:${name}`] };
     return { verdict: "carried", why: "", subjects: [`type ${name}`] };
   };
   const c = old.corrections, b = old.bem;

@@ -52,6 +52,7 @@ import { indexIfcDb, diffIndex, carryRulings, type FileIndex, type FileDiff, typ
 import { rankParents, versionLabel, readLineageSidecar, type VersionCandidate, type RankedParent } from "./core/projectLookup.js";
 import { ProjectPanel, type ProjectView } from "./view/ProjectPanel.js";
 import { FileChanges } from "./view/FileChanges.js";
+import { reviewRows, takenCases, rulingsToSave, type ReviewRow, type ImportChoice } from "./core/importReview.js";
 import { runBemPipeline, buildBemModel, readLatestRun, runCalibration, readLatestCalibration, type BemOutcome, type BemModelOutcome } from "./modules/bem/pipeline.js";
 import { BomCalibration, type CalibrationRunView } from "./modules/bom/view/BomCalibration.js";
 import { pvOffBefore, billedWithoutPv, producesElectricity, type HourSeries } from "./modules/bom/core/calibration.js";
@@ -180,7 +181,10 @@ const EMPTY_SITE: SiteRuling = {};
 
 /** THE FILE CHANGED (2026-09-09): the previous file's index and ledgers, the
  *  diff, every ruling's case, the user's choices and what was applied */
-interface CarryState { prev: { index: FileIndex; ledgers: Ledgers }; next: FileIndex; diff: FileDiff; cases: RulingCase[]; carry: Carry; take: Set<string>; applied: Set<string>; record: CarryRecord; prevAt: string }
+// THE FILE CHANGED, and THE IMPORT REVIEW (2026-11-13): carry is null when the version has rulings of its own and is only reviewed
+// against its parent; rows are every difference put to the user, choice their word (staged until Apply), saved what is stored
+interface CarryState { prev: { index: FileIndex; ledgers: Ledgers | null }; next: FileIndex; diff: FileDiff; cases: RulingCase[]; carry: Carry | null; take: Set<string>; applied: Set<string>; record: CarryRecord | null; prevAt: string;
+  rows: ReviewRow[]; choice: Map<string, ImportChoice>; saved: Map<string, ImportChoice>; projectId: string | null }
 
 /** the file this window has open, kept in sessionStorage so a reload reopens it (2026-10-09) */
 const OPEN_FILE_KEY = "bim-open-file";
@@ -4288,16 +4292,23 @@ export function App(): React.ReactElement {
           const prevLedgers: Ledgers = { corrections: pc, bem: pb, bom: pbom };
           const diff = diffIndex(best.index, next);
           const c = carryRulings(best.index, next, diff, prevLedgers);
-          const built = c.build(() => true);   // the default keeps every ruling the file changed under; the panel offers the file's word per row
+          // the words already given on these very values (the import review) decide their rows; every other ruling the file changed
+          // under is kept until the user says otherwise in the panel
+          const irs = proj ? await window.projects.importRulings(proj.globalId) : [];
+          const rows0 = reviewRows(diff, c.cases, irs);
+          const said = new Map(rows0.filter((r) => r.state === "quiet" && r.prior).map((r) => [r.id, r.prior!.choice] as const));
+          const take0 = takenCases(rows0, said);
+          const built = c.build((k) => !take0.has(k.id));
           ledger = built.corrections; bemLed = built.bem; bomLed = built.bom as BomLedger | null;
           if (ledger) await window.bim.saveCorrections(sha, ledger);
           if (bemLed) await window.bem.saveDecisions(sha, bemLed);
           if (bomLed) await window.bom.saveLedger(sha, bomLed);
-          const st: CarryState = { prev: { index: best.index, ledgers: prevLedgers }, next, diff, cases: c.cases, carry: c, take: new Set(), applied: new Set(), record: built.record, prevAt: pc?.savedAt ?? pb?.savedAt ?? "" };
+          const st: CarryState = { prev: { index: best.index, ledgers: prevLedgers }, next, diff, cases: c.cases, carry: c, take: take0, applied: new Set(take0), record: built.record, prevAt: pc?.savedAt ?? pb?.savedAt ?? "",
+            rows: rows0, choice: new Map(said), saved: new Map(said), projectId: proj?.globalId ?? null };
           carryRef.current = st; setCarry(st);
           setOpen((o) => new Set([...o, "changed"]));
           await window.projects.registerVersion({ ...record, parentSha: best.sha, madeBy: named ? side.sidecar!.madeBy : "carried", note: named ? `named by ${picked.name}.lineage.json${side.sidecar!.edits?.length ? `: ${side.sidecar!.edits.join("; ")}` : ""}` : `${pct(best.overlap)} of GlobalIds in common with ${best.sha.slice(0, 12)}` });
-          setProjectNote({ tone: "info", text: `${picked.name} is a NEW version of ${projWord}. Its rulings were carried from ${versionLabel(best)}${named ? " — the parent its lineage file names" : ""} — ${pct(best.overlap)} of GlobalIds in common, ${best.changed} elements changed, ${best.added} added, ${best.removed} removed; rule on each change under "file changed".${sideNote}${!named && eligible.length > 1 ? ` Other versions it could have come from: ${eligible.slice(1, 4).map((r) => `${r.sha.slice(0, 12)} (${pct(r.overlap)})`).join(", ")}.` : ""}${side.sidecar && !named ? ` Its lineage file names ${side.sidecar.parentSha256.slice(0, 12)}, which the store does not hold with rulings — the closest version was used instead.` : ""}` });
+          setProjectNote({ tone: "info", text: `${picked.name} is a NEW version of ${projWord}. Its rulings were carried from ${versionLabel(best)}${named ? " — the parent its lineage file names" : ""} — ${pct(best.overlap)} of GlobalIds in common, ${best.changed} elements changed, ${best.added} added, ${best.removed} removed; rule on each change under "IFC import review".${sideNote}${!named && eligible.length > 1 ? ` Other versions it could have come from: ${eligible.slice(1, 4).map((r) => `${r.sha.slice(0, 12)} (${pct(r.overlap)})`).join(", ")}.` : ""}${side.sidecar && !named ? ` Its lineage file names ${side.sidecar.parentSha256.slice(0, 12)}, which the store does not hold with rulings — the closest version was used instead.` : ""}` });
         } else {
           await window.projects.registerVersion({ ...record, madeBy: "opened" });
           setProjectNote({ tone: "warn", text: `${picked.name}: no rulings were found for this file${proj ? ` or ${projWord}` : ""}${ranked[0] ? ` — the closest stored version, ${ranked[0].sha.slice(0, 12)}, has only ${pct(ranked[0].overlap)} of its GlobalIds in common` : ""}. It starts with none; what you rule on is kept for it from here.` });
@@ -4329,6 +4340,21 @@ export function App(): React.ReactElement {
         try { v = await window.projects.registerVersion(parent ? { ...record, parentSha: parent.sha, madeBy: "inferred", note: `the closest version by GlobalIds: ${pct(parent.overlap)} in common` } : record); }
         catch (e) { v = await window.projects.registerVersion(record); console.warn(`[bim] the lineage was not recorded: ${e instanceof Error ? e.message : String(e)}`); }
         setProjectNote(v.parentSha ? { tone: "info", text: `${picked.name}: ${projWord} · this version ${sha.slice(0, 12)}, made ${v.madeBy === "inferred" ? "(by the closest match)" : v.madeBy} from ${v.parentSha.slice(0, 12)}. Its own rulings are loaded.` } : null);
+        // THE IMPORT REVIEW (2026-11-13): a version with rulings of its own is still compared with the version it came from, and every
+        // difference the user has not ruled on — or ruled on for another value — is put to them; nothing is carried
+        if (proj && v.parentSha) {
+          const pIdx = (await window.projects.versionIndex(v.parentSha)) as FileIndex | null;
+          if (pIdx) {
+            const d = diffIndex(pIdx, next);
+            const rows = reviewRows(d, [], await window.projects.importRulings(proj.globalId));
+            if (rows.some((r) => r.state !== "quiet")) {
+              const said = new Map(rows.filter((r) => r.state === "quiet" && r.prior).map((r) => [r.id, r.prior!.choice] as const));
+              const st: CarryState = { prev: { index: pIdx, ledgers: null }, next, diff: d, cases: [], carry: null, take: new Set(), applied: new Set(), record: null, prevAt: "", rows, choice: new Map(said), saved: new Map(said), projectId: proj.globalId };
+              carryRef.current = st; setCarry(st);
+              setOpen((o) => new Set([...o, "changed"]));
+            }
+          }
+        }
       }
       await refreshProject(proj);
       setProjectOpNote("");
@@ -4444,12 +4470,22 @@ export function App(): React.ReactElement {
     if (!st) return;
     setBusy(true);
     try {
+      // the review's words first: they are the user's whatever the ledgers do
+      const words = rulingsToSave(st.rows, st.choice, st.next.sha, new Date().toISOString()).filter((w) => st.saved.get(`${w.subjectKind}:${w.subjectKey}|${w.field}`) !== w.choice);
+      if (words.length && st.projectId) await window.projects.saveImportRulings(st.projectId, words);
+      const saved = new Map(st.choice);
+      if (!st.carry) {
+        const next: CarryState = { ...st, saved };
+        carryRef.current = next; setCarry(next);
+        setStatus(`the import review: ${words.length} word${words.length === 1 ? "" : "s"} kept for this project`);
+        return;
+      }
       const built = st.carry.build((c) => !st.take.has(c.id));
       seedCorrections(built.corrections);
       bemLedgerRef.current = built.bem; setBemLedger(built.bem); setBemEpw(built.bem?.weather?.epw ?? null);
       await window.bim.saveCorrections(shaRef.current, built.corrections ?? ledgerJson(shaRef.current));
       if (built.bem) await window.bem.saveDecisions(shaRef.current, built.bem);
-      const next: CarryState = { ...st, record: built.record, applied: new Set(st.take) };
+      const next: CarryState = { ...st, record: built.record, applied: new Set(st.take), saved };
       carryRef.current = next; setCarry(next);
       setStatus(`the file's changes ruled on: ${built.record.carried} carried · ${built.record.kept.length} kept · ${built.record.overwritten.length} overwritten by the file · ${built.record.dropped.length} dropped`);
       await rebuildIdf(choices, showSpaces ? FADED_SURFACE : fillOpacity, shellOn);
@@ -5534,13 +5570,13 @@ export function App(): React.ReactElement {
             )}
             {carry && (
               <>
-                <button className={`qaBtn sec${open.has("changed") ? " on" : ""}`} onClick={() => toggleSection("changed")} title="the file's hash had no ledger; the previous ifc.db's rulings were carried across the diff">
-                  {open.has("changed") ? "▾" : "▸"} file changed ({carry.diff.changes.length} changes · {carry.cases.filter((c) => c.verdict !== "carried").length} rulings to rule on)
+                <button className={`qaBtn sec${open.has("changed") ? " on" : ""}`} onClick={() => toggleSection("changed")} title="this version compared with the one it came from: every difference put to you once, your word kept for the project">
+                  {open.has("changed") ? "▾" : "▸"} IFC import review ({carry.rows.filter((r) => r.state !== "quiet" && !carry.choice.has(r.id)).length} to rule on · {carry.rows.length} differences)
                 </button>
                 {open.has("changed") && (
                   <FileChanges prevName={carry.prev.index.name} prevSha={carry.diff.prevSha} nextSha={carry.diff.nextSha} prevAt={carry.prevAt} diff={carry.diff} cases={carry.cases} record={carry.record}
-                    take={carry.take} pending={[...carry.take].some((id) => !carry.applied.has(id)) || [...carry.applied].some((id) => !carry.take.has(id))} busy={busy}
-                    onTake={(id, take) => setCarry((s) => { if (!s) return s; const t = new Set(s.take); if (take) t.add(id); else t.delete(id); const n = { ...s, take: t }; carryRef.current = n; return n; })}
+                    rows={carry.rows} choice={carry.choice} saved={carry.saved} busy={busy}
+                    onChoose={(ids, ch) => setCarry((s) => { if (!s) return s; const m = new Map(s.choice); for (const id of ids) { if (ch) m.set(id, ch); else m.delete(id); } const n = { ...s, choice: m, take: takenCases(s.rows, m) }; carryRef.current = n; return n; })}
                     onApply={() => void applyCarry()} onDismiss={() => { carryRef.current = null; setCarry(null); }} onSelect={(id) => { if (id !== null) selectElement(id); }} />
                 )}
               </>

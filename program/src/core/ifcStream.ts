@@ -71,6 +71,17 @@ export interface TypeMeta {
   layers: TypeLayer[];
   /** the layers came from the type's own association, from an element's usage, or there are none */
   layersFrom: "type" | "element" | null;
+  /** AN ELEMENT'S OWN MATERIALS (2026-11-13, the IFC import review): a row made for elements whose own set states other
+   *  materials than their type's — the type's express id; absent on a type the file states */
+  ownOf?: number;
+}
+
+/** what makes two material sets the same for the model: a layer set by its layers' materials and thicknesses in order
+ *  (0.1 mm), a constituent set by its DISTINCT material names — a window's parts repeat under other labels ("Glass",
+ *  "Glazing") in Revit's per-element copies with nothing changed (78 of the house's doors and windows) */
+export function materialsKey(layers: TypeLayer[]): string {
+  if (layers.length && layers.every((l) => l.part === null)) return layers.map((l) => `${l.material}@${l.thicknessM === null ? "-" : Math.round(l.thicknessM * 10000)}`).join("|");
+  return [...new Set(layers.map((l) => l.material))].sort().join("|");
 }
 
 /** An IfcSpace as the file draws it. web-ifc leaves spaces OUT of
@@ -358,6 +369,24 @@ export function readTypes(
     const t = types.get(tId);
     const set = setOf.get(e);
     if (t && set && !t.layers.length) { t.layers = set.layers; t.layersFrom = "element"; }
+  }
+  // AN ELEMENT'S OWN MATERIALS (2026-11-13): a typed element whose own set states other materials than its type's
+  // ("This element only" in BIMedit, a material painted on one wall in Revit) gets a row of its own — the set's express id,
+  // shared by every element carrying that set — named for its type and its materials, so it can carry its own construction.
+  // Read from the type before (it was hidden under the type's layers, the defect found 2026-11-06)
+  for (const [e, tId] of typeOf) {
+    const t = types.get(tId);
+    const set = setOf.get(e);
+    if (!t || !set || !t.layers.length || t.ownOf !== undefined) continue;
+    if (materialsKey(set.layers) === materialsKey(t.layers)) continue;
+    let own = types.get(set.setId);
+    if (!own) {
+      const mats = [...new Set(set.layers.map((l) => l.material))];
+      own = { expressId: set.setId, ifcClass: t.ifcClass, globalId: null, name: `${t.name ?? `#${tId}`} · own materials: ${mats.slice(0, 3).join(" / ")}${mats.length > 3 ? ` +${mats.length - 3}` : ""}`,
+        uWm2k: null, uPset: null, layers: set.layers, layersFrom: "element", ownOf: tId };
+      types.set(set.setId, own);
+    }
+    typeOf.set(e, own.expressId);
   }
   // an element with a set and no type: the type row whose name is the set's, else a row keyed by the set
   const byName = new Map<string, number>();

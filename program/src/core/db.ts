@@ -1129,7 +1129,8 @@ export function writeElementTypes(db: Database, types: TypeMeta[]): void {
       id INTEGER PRIMARY KEY, global_id TEXT, ifc_class TEXT NOT NULL, name TEXT,
       u_w_m2k REAL,               -- the type's stated ThermalTransmittance; NULL = not stated
       u_pset TEXT,                -- which pset stated it (Pset_WallCommon …)
-      layers INTEGER NOT NULL     -- rows in type_layers
+      layers INTEGER NOT NULL,    -- rows in type_layers
+      own_of INTEGER              -- 2026-11-13: an element's OWN materials, a row of its own — the type it was split from; NULL = a type the file states
     );
     CREATE TABLE IF NOT EXISTS type_layers (
       type_id INTEGER NOT NULL, seq INTEGER NOT NULL,
@@ -1139,25 +1140,27 @@ export function writeElementTypes(db: Database, types: TypeMeta[]): void {
     );
     DELETE FROM element_types; DELETE FROM type_layers;
   `);
-  const tput = db.prepare("INSERT INTO element_types VALUES (?,?,?,?,?,?,?)");
+  if (!(db.exec("PRAGMA table_info(element_types)")[0]?.values ?? []).some((r) => r[1] === "own_of")) db.run("ALTER TABLE element_types ADD COLUMN own_of INTEGER");
+  const tput = db.prepare("INSERT INTO element_types (id, global_id, ifc_class, name, u_w_m2k, u_pset, layers, own_of) VALUES (?,?,?,?,?,?,?,?)");
   const lput = db.prepare("INSERT INTO type_layers VALUES (?,?,?,?,?,?)");
   db.run("BEGIN");
   for (const t of types) {
-    tput.run([t.expressId, t.globalId, t.ifcClass, t.name, t.uWm2k, t.uPset, t.layers.length]);
+    tput.run([t.expressId, t.globalId, t.ifcClass, t.name, t.uWm2k, t.uPset, t.layers.length, t.ownOf ?? null]);
     t.layers.forEach((l, i) => lput.run([t.expressId, i, l.part, l.material, l.thicknessM === null ? null : round6(l.thicknessM), l.category]));
   }
   db.run("COMMIT");
   tput.free(); lput.free();
 }
-export interface ElementTypeRow { id: number; globalId: string | null; ifcClass: string; name: string | null; uWm2k: number | null; uPset: string | null; layers: TypeLayer[] }
+export interface ElementTypeRow { id: number; globalId: string | null; ifcClass: string; name: string | null; uWm2k: number | null; uPset: string | null; layers: TypeLayer[]; ownOf: number | null }
 export function queryElementTypes(db: Database): Map<number, ElementTypeRow> {
   const out = new Map<number, ElementTypeRow>();
   const r = db.exec("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='element_types'");
   if (!Number(r[0]?.values[0]?.[0] ?? 0)) return out;
-  const st = db.prepare("SELECT id, global_id, ifc_class, name, u_w_m2k, u_pset FROM element_types ORDER BY id");
+  const hasOwn = (db.exec("PRAGMA table_info(element_types)")[0]?.values ?? []).some((c) => c[1] === "own_of");
+  const st = db.prepare(`SELECT id, global_id, ifc_class, name, u_w_m2k, u_pset, ${hasOwn ? "own_of" : "NULL"} FROM element_types ORDER BY id`);
   while (st.step()) {
-    const row = st.get() as [number, string | null, string, string | null, number | null, string | null];
-    out.set(row[0], { id: row[0], globalId: row[1], ifcClass: row[2], name: row[3], uWm2k: row[4], uPset: row[5], layers: [] });
+    const row = st.get() as [number, string | null, string, string | null, number | null, string | null, number | null];
+    out.set(row[0], { id: row[0], globalId: row[1], ifcClass: row[2], name: row[3], uWm2k: row[4], uPset: row[5], layers: [], ownOf: row[6] });
   }
   st.free();
   const ls = db.prepare("SELECT type_id, part, material, thickness_m, category FROM type_layers ORDER BY type_id, seq");

@@ -541,6 +541,8 @@ ipcMain.handle("project:version", async (_ev, sha) => projects.version(sha));
 ipcMain.handle("project:versions", async (_ev, projectId) => projects.versions(projectId));
 ipcMain.handle("project:version-index", async (_ev, sha) => projects.versionIndex(sha));
 ipcMain.handle("project:unassigned", async () => projects.unassigned());
+ipcMain.handle("project:import-rulings", async (_ev, projectId) => projects.importRulings(projectId));
+ipcMain.handle("project:save-import-rulings", async (_ev, projectId, rows) => saveUser("import rulings", () => projects.saveImportRulings(projectId, rows)));
 ipcMain.handle("project:register-version", async (_ev, v) => saveUser("project version", () => projects.registerVersion(v)));
 ipcMain.handle("project:export", async (_ev, projectId, suggested) => {
   const r = await dialog.showSaveDialog({ title: "Export the project", defaultPath: suggested || `${projectId}.bimproject`, filters: [{ name: "BIM-BEM-BOM project", extensions: ["bimproject"] }] });

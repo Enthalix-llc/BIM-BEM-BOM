@@ -37,6 +37,14 @@ CREATE INDEX IF NOT EXISTS versions_project ON versions (project_id);
 CREATE TABLE IF NOT EXISTS ledgers (sha TEXT NOT NULL, kind TEXT NOT NULL, json TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (sha, kind));
 CREATE TABLE IF NOT EXISTS ledger_history (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT NOT NULL, kind TEXT NOT NULL, json TEXT NOT NULL, saved_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS history_ledger ON ledger_history (sha, kind, id);
+-- THE IMPORT RULINGS (2026-11-13, the IFC import review): the user's word on one difference between a new IFC and the version
+-- before it — accept (the file's value is the new reference) · ignore (never edited from here; asked again when the file's value
+-- changes) · revise (the IFC is to be changed back) — keyed by the subject (an element's or a room's GlobalId, a type's name)
+-- and the field, per project, so it outlives any one file. It records decisions and holds no model values
+CREATE TABLE IF NOT EXISTS import_rulings (
+  project_id TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_key TEXT NOT NULL, field TEXT NOT NULL,
+  file_value TEXT NOT NULL, choice TEXT NOT NULL, scope TEXT, request_id TEXT, version_sha TEXT NOT NULL, at TEXT NOT NULL,
+  PRIMARY KEY (project_id, subject_kind, subject_key, field));
 `;
 
 const nowIso = () => new Date().toISOString();
@@ -206,6 +214,7 @@ function openStore(file, SQL) {
       for (const l of all("SELECT * FROM ledgers WHERE sha = ?", [v.sha])) out.run("INSERT INTO ledgers VALUES (?, ?, ?, ?)", [l.sha, l.kind, l.json, l.saved_at]);
       for (const h of all("SELECT * FROM ledger_history WHERE sha = ? ORDER BY id", [v.sha])) out.run("INSERT INTO ledger_history (sha, kind, json, saved_at) VALUES (?, ?, ?, ?)", [h.sha, h.kind, h.json, h.saved_at]);
     }
+    for (const r of all("SELECT * FROM import_rulings WHERE project_id = ?", [projectId])) out.run("INSERT INTO import_rulings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [r.project_id, r.subject_kind, r.subject_key, r.field, r.file_value, r.choice, r.scope, r.request_id, r.version_sha, r.at]);
     const tmp = `${outFile}.tmp`;
     fs.writeFileSync(tmp, Buffer.from(out.export()));
     renameRetry(tmp, outFile);
@@ -215,7 +224,7 @@ function openStore(file, SQL) {
   function importProject(inFile) {
     const src = new SQL.Database(fs.readFileSync(inFile));
     const q = (sql, params) => { const s = src.prepare(sql); const o = []; s.bind(params || []); while (s.step()) o.push(s.getAsObject()); s.free(); return o; };
-    const counts = { projects: 0, versions: 0, ledgers: 0, kept: 0, history: 0 };
+    const counts = { projects: 0, versions: 0, ledgers: 0, kept: 0, history: 0, importRulings: 0 };
     try {
       for (const p of q("SELECT * FROM projects")) { if (!one("SELECT id FROM projects WHERE id = ?", [p.id])) { run("INSERT INTO projects VALUES (?, ?, ?, ?)", [p.id, p.name, p.long_name, p.created_at]); counts.projects++; } }
       for (const v of q("SELECT * FROM versions")) {
@@ -232,9 +241,32 @@ function openStore(file, SQL) {
       for (const h of q("SELECT * FROM ledger_history ORDER BY id")) {
         if (!one("SELECT id FROM ledger_history WHERE sha = ? AND kind = ? AND saved_at = ? AND json = ?", [h.sha, h.kind, h.saved_at, h.json])) { run("INSERT INTO ledger_history (sha, kind, json, saved_at) VALUES (?, ?, ?, ?)", [h.sha, h.kind, h.json, h.saved_at]); counts.history++; }
       }
+      // an import ruling the store lacks is added; one it has is kept unless the file's is newer
+      const hasIr = q("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_rulings'").length > 0;
+      for (const r of hasIr ? q("SELECT * FROM import_rulings") : []) {
+        const cur = one("SELECT at FROM import_rulings WHERE project_id = ? AND subject_kind = ? AND subject_key = ? AND field = ?", [r.project_id, r.subject_kind, r.subject_key, r.field]);
+        if (!cur || r.at > cur.at) { run("INSERT OR REPLACE INTO import_rulings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [r.project_id, r.subject_kind, r.subject_key, r.field, r.file_value, r.choice, r.scope, r.request_id, r.version_sha, r.at]); counts.importRulings++; }
+      }
     } finally { src.close(); }
     flush();
     return counts;
+  }
+  /** the import rulings of a project, and their upsert (one row per subject and field: the latest word wins) */
+  const IMPORT_CHOICES = ["accept", "ignore", "revise"];
+  function importRulings(projectId) {
+    return all("SELECT * FROM import_rulings WHERE project_id = ? ORDER BY subject_kind, subject_key, field", [String(projectId)])
+      .map((r) => ({ subjectKind: r.subject_kind, subjectKey: r.subject_key, field: r.field, fileValue: r.file_value, choice: r.choice, scope: r.scope, requestId: r.request_id, versionSha: r.version_sha, at: r.at }));
+  }
+  function saveImportRulings(projectId, rows) {
+    if (!projectId) throw new Error("projectStore: an import ruling needs a project");
+    for (const r of rows) {
+      if (!IMPORT_CHOICES.includes(r.choice)) throw new Error(`projectStore: no import choice "${r.choice}" (${IMPORT_CHOICES.join(", ")})`);
+      if (!["element", "type", "space"].includes(r.subjectKind) || !r.subjectKey || !r.field) throw new Error("projectStore: an import ruling names its subject and field");
+      run(`INSERT OR REPLACE INTO import_rulings (project_id, subject_kind, subject_key, field, file_value, choice, scope, request_id, version_sha, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [String(projectId), r.subjectKind, String(r.subjectKey), String(r.field), String(r.fileValue ?? ""), r.choice, r.scope ?? null, r.requestId ?? null, String(r.versionSha ?? ""), r.at || nowIso()]);
+    }
+    flush();
+    return importRulings(projectId).length;
   }
   /** THE PROJECT'S OWN RECORD (2026-11-12, a project is a folder): its name, the template it started from, its data-sources record
    *  (JSON) and the IFC it last had open — kept in meta, beside the schema version */
@@ -246,7 +278,7 @@ function openStore(file, SQL) {
       .map((r) => ({ rel: path.join("projects", r.project_id || "unassigned", r.sha, `${r.kind}.json`), bytes: Buffer.from(r.json) }));
   }
 
-  return { file, flush, loadLedger, saveLedger, listHistory, readHistory, ensureProject, registerVersion, version, versionIndex, versions, project, projects, unassigned, migrateFromFiles, exportProject, importProject, ledgerFiles, getMeta, setMeta, close: () => db.close() };
+  return { file, flush, loadLedger, saveLedger, listHistory, readHistory, ensureProject, registerVersion, version, versionIndex, versions, project, projects, unassigned, migrateFromFiles, exportProject, importProject, ledgerFiles, getMeta, setMeta, importRulings, saveImportRulings, close: () => db.close() };
 }
 
 module.exports = { openStore, SCHEMA_VERSION, KINDS, HISTORY_KEEP };

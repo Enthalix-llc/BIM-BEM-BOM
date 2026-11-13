@@ -169,9 +169,11 @@ interface Window {
     versions(projectId: string): Promise<StoredVersion[]>;
     versionIndex(sha: string): Promise<unknown | null>;
     unassigned(): Promise<StoredVersion[]>;
+    importRulings(projectId: string): Promise<import("./core/importReview.js").ImportRuling[]>;
+    saveImportRulings(projectId: string, rows: import("./core/importReview.js").ImportRuling[]): Promise<number>;
     registerVersion(v: VersionRecord): Promise<StoredVersion>;
     exportProject(projectId: string, suggested?: string): Promise<{ file: string; project: string; versions: number } | null>;
-    importProject(): Promise<{ file: string; projects: number; versions: number; ledgers: number; kept: number; history: number } | null>;
+    importProject(): Promise<{ file: string; projects: number; versions: number; ledgers: number; kept: number; history: number; importRulings?: number } | null>;
   };
   __BIM__?: { census(): unknown; open?(p: string): Promise<void> };
 }

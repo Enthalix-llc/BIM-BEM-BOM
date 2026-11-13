@@ -102,14 +102,17 @@ export function constructionTypes(
   const areaOf = new Map<string, number>();   // `${section}|${key}|${construction}` → the cells' gross area carrying it
   const rowFor = (kind: TypeRow["kind"], elementId: number, fallback: string): TypeRow => {
     const el = elements.get(elementId);
-    const key = typeKeyOf(el?.name ?? null) || fallback;
+    // an element with its OWN materials (2026-11-13) is a row of its own, keyed by that row's name — the key its ruling takes
+    const own = el?.typeId !== null && el?.typeId !== undefined ? types.get(el.typeId) : undefined;
+    const ownName = own?.ownOf !== null && own?.ownOf !== undefined ? own.name : null;
+    const key = ownName ?? (typeKeyOf(el?.name ?? null) || fallback);
     const section = sectionOfKind[kind];
     const k = `${section}|${key}`;
     let t = byKey.get(k);
     if (!t) {
       const typeId = el?.typeId ?? null;
       const ty = typeId !== null ? types.get(typeId) : undefined;
-      t = { section, key, label: elementTypeLabel(el?.name ?? null) || fallback, typeId, kind, elements: [], rowIds: [], ext: 0, int: 0, grossM2: 0, modelM2: 0, notEmitted: [], constructions: [], codeConstructions: [], uWm2k: null,
+      t = { section, key, label: ownName ? `${elementTypeLabel(el?.name ?? null) || fallback} · own materials` : elementTypeLabel(el?.name ?? null) || fallback, typeId, kind, elements: [], rowIds: [], ext: 0, int: 0, grossM2: 0, modelM2: 0, notEmitted: [], constructions: [], codeConstructions: [], uWm2k: null,
         fileU: ty?.uWm2k ?? null, layers: ty?.layers ?? [], glazed: null };
       byKey.set(k, t);
     }

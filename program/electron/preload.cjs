@@ -105,6 +105,8 @@ contextBridge.exposeInMainWorld("projects", {
   versions: (projectId) => ipcRenderer.invoke("project:versions", projectId),
   versionIndex: (sha) => ipcRenderer.invoke("project:version-index", sha),
   unassigned: () => ipcRenderer.invoke("project:unassigned"),
+  importRulings: (projectId) => ipcRenderer.invoke("project:import-rulings", projectId),
+  saveImportRulings: (projectId, rows) => ipcRenderer.invoke("project:save-import-rulings", projectId, rows),
   registerVersion: (v) => ipcRenderer.invoke("project:register-version", v),
   exportProject: (projectId, suggested) => ipcRenderer.invoke("project:export", projectId, suggested),
   importProject: () => ipcRenderer.invoke("project:import"),

@@ -1435,3 +1435,11 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .sourcesEdit label { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .sourcesEdit input:not([type="checkbox"]), .sourcesEdit textarea { flex: 1; min-width: 160px; background: #0c0e14; color: var(--text); border: 1px solid #33405a; border-radius: 3px; padding: 2px 4px; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; }
 .kvTable { border-collapse: collapse; font-size: 11px; }
+/* THE IFC IMPORT REVIEW (2026-11-13): a difference as a stacked block, so the editing column's width is enough — the element, what
+   changed, the ruling it touches, then the choice */
+.qaPanel .reviewRow { display: grid; gap: 3px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-family: var(--body, system-ui); font-size: 12px; overflow-wrap: anywhere; }
+.qaPanel .reviewRow.clickable { cursor: pointer; }
+.qaPanel .reviewRow.clickable:hover { background: rgba(255, 255, 255, 0.04); }
+.qaPanel .reviewRow .reviewWhat { color: var(--text); }
+.qaPanel .reviewRow select { justify-self: start; max-width: 100%; }
+.qaPanel.changes details > summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; cursor: pointer; padding: 4px 0; }
