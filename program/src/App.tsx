@@ -97,7 +97,9 @@ import { siteTypes } from "./modules/bem/view/SiteTable.js";
 import { LocationFrame, LocationLocator, WeatherStationsMap, StationList, SiteFilesFrame, TurnMenu, stationsInView, zoneCode, type SiteFocus, type Located } from "./modules/bem/view/SiteViews.js";
 import type { MapBounds } from "./view/TileMap.js";
 import { parseStationListing, parseStationKml, USA_TMYX_KML, TMYX_CACHE, groupStations, nearestStations, wmoOfEpw, stationId, newestFile, WEATHER_LISTING_URL, STATIONS_CACHE, type Station, type NearStation, type StationFile } from "./core/weatherStations.js";
-import { projectSiteFile, roomSolids, isProjected } from "./core/siteProject.js";
+import { projectSiteFile, roomSolids, isProjected, filePlace } from "./core/siteProject.js";
+import { readStepFrame, placeInStep, rotationToTrueNorth, turnOf, northOf, type StepFrame } from "./core/ifcStepPlace.js";
+import { planFrame } from "./core/frameWrite.js";
 import { isShaft, projectElevation, spacesOnRoof } from "./core/levels.js";
 import { parseCounties, climateZoneAt, climateZoneFromTable, parseCountyZones, COUNTIES_URL, COUNTIES_CACHE, type CountyFeature, type CountyZone, type CountyZoneRead } from "./core/climateZone.js";
 import { STANDARD_SOURCES, DEFAULT_CODE_TABLES, readSources, type ProjectSources } from "./core/projectSources.js";
@@ -144,7 +146,7 @@ import { describeEpw, readEpw } from "./modules/bem/core/epwRead.js";
 import type { BillColumnMap } from "./modules/bom/core/csvRead.js";
 import type { BomLedger } from "./modules/bom/core/bomDb.js";
 import { ExplainLayer } from "./explain/ExplainLayer";
-import { AlignDialog, type AlignPick } from "./view/AlignDialog";
+import { AlignDialog, type AlignPick, type FrameRow } from "./view/AlignDialog";
 import { openCfdDb, queryRuns as queryCfdRuns, queryMetrics as queryCfdMetrics, queryOpenings as queryCfdOpenings, querySlices as queryCfdSlices, queryWalls as queryCfdWalls, queryArrows as queryCfdArrows, type RunRow as CfdRunRow } from "./modules/cfd/core/cfdDb";
 import { CfdFrame, CfdColumn, type CfdFrameTab, type CfdShown, type SliceField } from "./modules/cfd/view/CfdViews";
 import { buildCfdView, arrowScale } from "./view/cfdView";
@@ -161,7 +163,7 @@ import { diagnose, fileNamed, type Diagnosis as CfdDiagnosis } from "./modules/c
 import { MONITORS, readDat, settledYet, settleWords, STOP_DEFAULT, type MonitorKey, type Settle } from "./modules/cfd/core/cfdConverge";
 import { importCase as importCfdCase } from "./modules/cfd/pipeline";
 import type { Arrow as CfdArrow } from "./modules/cfd/core/streamArrows";
-import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, alignPoint, unalignPoint, roofGap, type AxisLocks, type FileAlign } from "./core/siteAlign";
+import { alignOf, alignMatrix, matchPoint, setPivot, isIdentity, NO_LOCKS, NO_ALIGN, alignPoint, unalignPoint, roofGap, type AxisLocks, type FileAlign } from "./core/siteAlign";
 
 // pane-2 default: the envelope + structure classes plane assignment will care
 // about. A VIEW filter only — the DB stores every streamed element
@@ -322,6 +324,10 @@ export function App(): React.ReactElement {
   const siteFileAlignRef = useRef<Record<string, FileAlign>>({});
   type AlignEdit = { file: string; draft: FileAlign; pick: AlignPick; from: [number, number, number] | null; note: string | null; locks: AxisLocks };
   const [alignEdit, setAlignEditState] = useState<AlignEdit | null>(null);
+  // ONE FRAME, WRITTEN INTO THE FILES (2026-11-19): each file's own frame as it states it, read when the dialog opens
+  const [frames, setFrames] = useState<Record<string, StepFrame | { refused: string }> | null>(null);
+  const [frameLoading, setFrameLoading] = useState<string | null>(null);
+  const [frameStandard, setFrameStandard] = useState("");
   const alignEditRef = useRef<AlignEdit | null>(null);
   const setAlignEdit = (e: AlignEdit | null): void => { alignEditRef.current = e; setAlignEditState(e); };
   /** the overlay roots the preview lives in (one per pane), so a nudge moves the drawn file without rebuilding it */
@@ -4092,6 +4098,116 @@ export function App(): React.ReactElement {
     setAlignEdit({ file: f, draft: appliedAlign(f), pick: null, from: null, note: note ?? null, locks: NO_LOCKS });
     if (!tabRef.current.startsWith("bim")) setTab("bim-edit");
     redrawSoon();
+    // the frames are re-read whenever the files are not the ones read (a file projected or left out, another building opened)
+    const want = [nameRef.current, ...files].sort().join("|");
+    if (!frames || Object.keys(frames).sort().join("|") !== want) void loadFrames();
+  };
+  const latin1 = (b: Uint8Array): string => new TextDecoder("latin1").decode(b);
+  const unlatin1 = (t: string): Uint8Array => { const o = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) o[i] = t.charCodeAt(i) & 0xff; return o; };
+  /** each file's frame as it states it — its IfcSite placement, TrueNorth and length unit — read from its own text */
+  const loadFrames = async (): Promise<void> => {
+    if (!pathRef.current || !bytesRef.current) return;
+    setFrameLoading("reading each file's own placement and true north…");
+    await new Promise((r) => setTimeout(r, 30));
+    const out: Record<string, StepFrame | { refused: string }> = { [nameRef.current]: readStepFrame(latin1(bytesRef.current)) };
+    for (const n of projectedFiles()) {
+      const f = await window.bim.readSibling(pathRef.current, n);
+      out[n] = f ? readStepFrame(latin1(new Uint8Array(f.bytes))) : { refused: "could not be read" };
+    }
+    setFrames(out);
+    setFrameLoading(null);
+    // the standard: the site plan when there is one (it carries the north arrow), else the building
+    const site = (siteFileRowsRef.current as SiteFileRow[]).find((r) => r.projected && r.kind === "site")?.name;
+    setFrameStandard((cur) => (cur && out[cur] ? cur : site ?? nameRef.current));
+  };
+  /** web-ifc's plan north from a file's own IFC TrueNorth (readTrueNorth's mapping) */
+  const webNorth = (tn: [number, number]): [number, number] => { const l = Math.hypot(tn[0], tn[1]) || 1; return [tn[0] / l, -tn[1] / l]; };
+  /** what each file states now and will state after the write, with the edited file at its draft */
+  const framePlan = (useDraft: boolean): { rows: FrameRow[]; writes: Array<{ name: string; site: number[][] | null; trueNorth: [number, number] }> } | null => {
+    const run = runRef.current;
+    if (!frames || !run) return null;
+    const ed = alignEditRef.current;
+    const ok = Object.entries(frames).filter((e): e is [string, StepFrame] => !("refused" in e[1]));
+    const files = ok.map(([name, frame]) => ({ name, frame, place: name === nameRef.current ? null
+      : filePlace(run.trueNorth, webNorth(frame.trueNorth), { align: useDraft && ed?.file === name ? ed.draft : appliedAlign(name) }).place }));
+    const std = files.some((f) => f.name === frameStandard) ? frameStandard : nameRef.current;
+    const plan = planFrame(files, std);
+    if ("refused" in plan) return null;
+    const pos = (m: number[][], sc: number): [number, number, number] => [m[0]![3]! * sc, m[1]![3]! * sc, m[2]![3]! * sc];
+    const rows: FrameRow[] = Object.entries(frames).map(([name, fr]) => {
+      if ("refused" in fr) return { name, building: name === nameRef.current, rotNow: 0, rotAfter: 0, posNow: [0, 0, 0], posAfter: [0, 0, 0], refused: fr.refused, changes: false, gridTurn: 0 };
+      const w = plan.writes.find((x) => x.name === name)!;
+      const site = w.site ?? fr.site;
+      let rot = turnOf(site) - northOf(w.trueNorth);
+      while (rot <= -180) rot += 360; while (rot > 180) rot -= 360;
+      const changes = Math.abs(northOf(fr.trueNorth) - northOf(w.trueNorth)) > 1e-6 || (!!w.site && w.site.some((row, i) => row.some((v, j) => Math.abs(v - fr.site[i]![j]!) > 1e-9)));
+      return { name, building: name === nameRef.current, rotNow: rotationToTrueNorth(fr), rotAfter: rot, posNow: pos(fr.site, fr.lengthScale), posAfter: pos(site, fr.lengthScale), refused: null,
+        changes, gridTurn: w.site ? turnOf(w.site) - turnOf(fr.site) : 0 };
+    });
+    return { rows, writes: plan.writes };
+  };
+  /** THE WRITE: each file's IfcSite placement and TrueNorth into the IFC itself (no vertex touched; the previous bytes beside it) */
+  const writeFrame = async (): Promise<void> => {
+    const run = runRef.current, db = dbRef.current, housePath = pathRef.current;
+    const plan = framePlan(false);
+    if (!run || !db || !housePath || !plan || !frames) return;
+    const todo = plan.writes.filter((w) => plan.rows.find((x) => x.name === w.name)?.changes);
+    if (!todo.length) return;
+    const fmtDeg = (v: number): string => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}°`;
+    const lines = todo.map((w) => { const r = plan.rows.find((x) => x.name === w.name)!; return `· ${w.name}: rotation to true north ${fmtDeg(r.rotNow)} → ${fmtDeg(r.rotAfter)}${w.site ? "" : " (its TrueNorth only — no element moves)"}`; });
+    if (!window.confirm(`Write the alignment into ${todo.length} IFC file${todo.length === 1 ? "" : "s"}? Standard: ${frameStandard}.\n\n${lines.join("\n")}\n\nEach file's IfcSite placement and TrueNorth are rewritten (every other byte kept, no vertex touched); the previous bytes are saved beside each file. Every program then opens them aligned.`)) return;
+    stopPick();
+    setBusy(true);
+    try {
+      const at = new Date().toISOString();
+      let houseOut: Uint8Array | null = null;
+      const done: string[] = [];
+      for (const w of todo) {
+        const isHouse = w.name === nameRef.current;
+        const src = isHouse ? { path: housePath, bytes: bytesRef.current! } : await window.bim.readSibling(housePath, w.name).then((f) => (f ? { path: f.path, bytes: new Uint8Array(f.bytes) } : null));
+        if (!src) throw new Error(`${w.name} could not be read`);
+        const r = placeInStep(latin1(src.bytes), { ...(w.site ? { site: w.site } : {}), trueNorth: w.trueNorth });
+        if (!r.report.ok) throw new Error(`${w.name}: ${r.report.refused}`);
+        const out = unlatin1(r.text);
+        const { backup } = await window.bim.writeIfc(src.path, out);
+        done.push(`${w.name} (backup ${backup.split(/[\\/]/).pop()})`);
+        if (isHouse) { houseOut = out; continue; }
+        // the file now lands by itself: its alignment of ours is spent
+        siteFileAlignRef.current = { ...siteFileAlignRef.current, [w.name]: { ...NO_ALIGN, at } };
+        const turns = { ...siteFileTurnRef.current }; delete turns[w.name]; siteFileTurnRef.current = turns;
+        // the site file's rulings follow its new bytes: the write appends lines and renumbers nothing, so every deletion still names its element
+        const oldSha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", src.bytes.slice().buffer)), (b) => b.toString(16).padStart(2, "0")).join("");
+        if (shadingRef.current.siteSha256 === oldSha || (!shadingRef.current.siteSha256 && siteShaRef.current === oldSha)) {
+          const newSha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", out.slice().buffer)), (b) => b.toString(16).padStart(2, "0")).join("");
+          shadingRef.current = { ...shadingRef.current, siteSha256: newSha };
+          siteShaRef.current = newSha;
+        }
+      }
+      setAlignEdit(null);
+      setFrames(null);
+      if (houseOut) {
+        // the building's TrueNorth changed: a new version of it, the ledgers follow its new hash (no element moved)
+        const sha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", houseOut.slice().buffer)), (b) => b.toString(16).padStart(2, "0")).join("");
+        await window.bim.saveCorrections(sha, ledgerJson(sha));
+        if (bemLedgerRef.current) await window.bem.saveDecisions(sha, { ...bemLedgerRef.current, sourceIfcSha256: sha });
+        if (bomLedgerRef.current) await window.bom.saveLedger(sha, { ...bomLedgerRef.current, sourceIfcSha256: sha });
+        const proj = run.project ?? null;
+        await window.projects.registerVersion({ sha, projectId: proj?.globalId, projectName: proj?.name, projectLongName: proj?.longName, parentSha: shaRef.current || null, madeBy: "write-frame", note: `true north written from ${frameStandard}`, fileName: nameRef.current, filePath: housePath });
+        setStatus(`alignment written into ${done.join(", ")} — reopening`);
+        await ifcPaneRef.current?.clear();
+        await loadPicked({ name: nameRef.current, path: housePath, bytes: houseOut });
+      } else {
+        if (shaRef.current) await window.bim.saveCorrections(shaRef.current, ledgerJson(shaRef.current));
+        terrainRef.current = null; setTerrainInfo(null);
+        await projectFiles(housePath, run, db);
+        stampIfcContentSha(db);
+        await window.bim.saveDb("ifc.db", db.export());
+        await rebuildIdf(choices, showSpaces ? FADED_SURFACE : fillOpacity, shellOn);
+        applyTerrain(showTerrainRef.current);
+        setStatus(`alignment written into ${done.join(", ")} — each now lands by itself, with no alignment of ours`);
+      }
+    } catch (err) { setStatus(`write failed: ${err instanceof Error ? err.message : String(err)} — nothing after the failed file was written; the backups are beside the files`); }
+    finally { setBusy(false); }
   };
   /** after a load or a projection: a projected file with no accepted placement is shown in the dialog, once per window */
   const askAlign = (): void => {
@@ -4780,7 +4896,9 @@ export function App(): React.ReactElement {
           draft={alignEdit.draft} applied={appliedAlign(alignEdit.file)} onDraft={onAlignDraft}
           pick={alignEdit.pick} onPick={onAlignPick} locks={alignEdit.locks} onLocks={onAlignLocks} imperial={imperial} busy={busy} note={alignEdit.note}
           fileWord={siteFiles.find((f) => f.name === alignEdit.file)?.word ?? null}
-          roofGap={alignRoofGap} onAccept={() => void acceptAlign()} onCancel={closeAlign} />
+          roofGap={alignRoofGap} onAccept={() => void acceptAlign()} onCancel={closeAlign}
+          frame={{ rows: framePlan(true)?.rows ?? null, standards: frames ? Object.keys(frames).filter((n) => !("refused" in frames[n]!)) : [],
+            standard: frameStandard, onStandard: setFrameStandard, loading: frameLoading, onWrite: () => void writeFrame() }} />
       )}
       {closeMenu && (
         <>

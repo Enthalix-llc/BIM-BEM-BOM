@@ -134,6 +134,18 @@ export function insideRooms(tris: V3[][], rooms: Array<RoomSolid & { min?: V3; m
   return roomOf(tris, rooms, grow) !== null;
 }
 
+/** WHERE A FILE BESIDE THE HOUSE LANDS: the TrueNorth turn about the house's origin, then the user's placement (a move and a turn
+ *  about a locked pivot) when there is one — the one rule the projection and the frame writer (frameWrite.ts) share */
+export function filePlace(houseTrueNorth: [number, number] | null, fileTrueNorth: [number, number] | null, opts: { turnDeg?: number; align?: FileAlign }):
+  { northDeg: number; rotationDeg: number; place: (p: V3) => V3 } {
+  const align = opts.align && !isIdentity(opts.align) ? opts.align : null;
+  const turnDeg = opts.align ? opts.align.deg : (opts.turnDeg ?? 0);
+  const northDeg = rotationFromTrueNorth(houseTrueNorth) - rotationFromTrueNorth(fileTrueNorth);
+  const rotationDeg = northDeg + turnDeg;
+  const place = (p: V3): V3 => (align ? alignPoint(Math.abs(northDeg) < 1e-9 ? p : rotateY(p, northDeg), align) : rotateY(p, rotationDeg));
+  return { northDeg, rotationDeg, place };
+}
+
 /** the element's kind as the file names it: the family:type with the instance id dropped */
 export const kindName = (name: string): string => name.replace(/:\d+$/, "");
 
@@ -153,10 +165,7 @@ export function projectSiteFile(
   // typed "0.65° clockwise" adds +0.65 to the TrueNorth turn
   const align = opts.align && !isIdentity(opts.align) ? opts.align : null;
   const turnDeg = opts.align ? opts.align.deg : (opts.turnDeg ?? 0);
-  const northDeg = rotationFromTrueNorth(opts.houseTrueNorth) - rotationFromTrueNorth(fileTrueNorth);
-  const rotationDeg = northDeg + turnDeg;
-  // the TrueNorth turn about the house's origin, then the user's placement (a move and a turn about a locked pivot) when there is one
-  const place = (p: V3): V3 => (align ? alignPoint(Math.abs(northDeg) < 1e-9 ? p : rotateY(p, northDeg), align) : rotateY(p, rotationDeg));
+  const { northDeg, rotationDeg, place } = filePlace(opts.houseTrueNorth, fileTrueNorth, opts);
   const turn = (tris: V3[][]): V3[][] => (!align && Math.abs(rotationDeg) < 1e-9 ? tris : tris.map((t) => t.map(place) as V3[]));
   const kind: FileProjection["kind"] = src.tris.length ? "site" : "shade";
   const offset = opts.index * FILE_ID_STRIDE;

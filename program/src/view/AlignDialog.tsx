@@ -21,6 +21,29 @@ const read = (k: string): string | null => { try { return window.localStorage.ge
 
 export type AlignPick = null | "pivot" | "from" | "to";
 
+/** ONE FRAME, WRITTEN INTO THE FILES (the user's rulings, 2026-11-19): what each file states now and will state after the write —
+ *  its rotation to true north and where its IfcSite sits (E / N / Gnd along the analysed building's project grid, metres) */
+export interface FrameRow {
+  name: string;
+  /** the analysed building — the frame itself: its placement is never rewritten */
+  building: boolean;
+  rotNow: number; rotAfter: number;
+  posNow: [number, number, number]; posAfter: [number, number, number];
+  /** a file that cannot be written, and why */
+  refused: string | null;
+  /** the write changes the file (its placement or its TrueNorth) */
+  changes: boolean;
+  /** how far its own grid turns onto the building's (degrees anticlockwise from above; 0 for the building) */
+  gridTurn: number;
+}
+export interface FrameView {
+  rows: FrameRow[] | null;
+  /** the files that may be the standard (the one whose true north every other file follows) */
+  standards: string[]; standard: string; onStandard: (name: string) => void;
+  loading: string | null;
+  onWrite: () => void;
+}
+
 export function AlignDialog(p: {
   files: string[]; file: string; onFile: (name: string) => void;
   draft: FileAlign; applied: FileAlign; onDraft: (a: FileAlign) => void;
@@ -29,6 +52,7 @@ export function AlignDialog(p: {
   imperial: boolean; busy: boolean; note: string | null; fileWord: string | null;
   /** the file's PV panels against the house's roof under the draft placement; null when the file has none */
   roofGap?: RoofGap | null;
+  frame?: FrameView;
   onAccept: () => void; onCancel: () => void;
 }): React.ReactElement {
   const u = p.imperial ? FT : 1, lu = p.imperial ? "ft" : "m";
@@ -131,6 +155,51 @@ export function AlignDialog(p: {
             <div className={`alignRoof${bad ? " bad" : ""}`} title={"each panel's lowest corner above the house's roof under it, with this placement (the roof planes in idf.db).\nThe same gap on every panel (spread near 0) means the file sits square to the house; a spread means it is turned or tilted against the roof; a negative gap puts a panel under the roof, and the model then leaves it out.\nIt measures only — no panel is moved."}>
               {g.measured ? <>gap {len(g.min)} to {len(g.max)} {lu} · spread {fmt(spread)} {lu}{g.under ? ` · ${g.under} under the roof` : ""}</> : "no panel over a roof"}
               {g.measured > 0 && g.measured < g.panels ? ` · ${g.panels - g.measured} over no roof` : ""}
+            </div>
+          </>
+        );
+      })()}
+      {p.frame && (() => {
+        const f = p.frame, deg = (v: number): string => `${Math.abs(v) < 0.005 ? "+0.00" : (v > 0 ? "+" : "−") + Math.abs(v).toFixed(2)}°`;
+        const pos = (q: [number, number, number]): string => `E ${fmt(q[0])}, N ${fmt(q[1])}, Gnd ${fmt(q[2])} ${lu}`;
+        const same = (r: FrameRow): boolean => Math.abs(r.rotNow - r.rotAfter) < 0.005 && r.posNow.every((v, i) => Math.abs(v - r.posAfter[i]!) < 0.0005);
+        const changes = f.rows?.filter((r) => !r.refused && r.changes).length ?? 0;
+        const what = (r: FrameRow): string => !r.changes ? "already in the frame"
+          : r.building ? "its TrueNorth only — no element moves"
+          : Math.abs(r.gridTurn) >= 0.005 ? `its grid turned ${deg(r.gridTurn)} onto the building's` : "its placement moved onto the building's grid";
+        return (
+          <>
+            <div className="alignSec">WRITE INTO THE IFC FILES <span className="ctxDim">· one frame, as BIM programs share coordinates</span></div>
+            <div className="alignRow">
+              <span className="alignLab">Standard</span>
+              <select value={f.standard} disabled={p.busy || !f.rows} onChange={(e) => f.onStandard(e.target.value)}
+                title={"the file whose TRUE NORTH every other file follows — the site plan when there is one (it carries the north arrow); else the file you trust.\nIts own rotation to true north is kept; the others are written to match the alignment you accepted here."}>
+                {f.standards.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            {f.loading && <div className="ctxDim">{f.loading}</div>}
+            {f.rows && f.rows.map((r) => (
+              <div key={r.name} className="alignFrame" title={r.refused ?? (r.building
+                ? "the analysed building: its placement is never rewritten and no vertex moves — only its TrueNorth, when the standard says it is off"
+                : "this file's IfcSite placement and TrueNorth are rewritten so it lands here by itself, in any program, with no alignment of ours")}>
+                <div><b>{r.name}</b>{r.name === f.standard ? " · standard" : ""}{r.building ? " · the building" : ""}</div>
+                {r.refused ? <div className="bad">{r.refused}</div> : (
+                  <>
+                    <div className="ctxDim">rotation to true north {deg(r.rotNow)}{same(r) ? " · unchanged" : ` → ${deg(r.rotAfter)}`}</div>
+                    <div className="ctxDim">{pos(r.posAfter)}{same(r) ? "" : " (after)"}</div>
+                    <div className="ctxDim">write: {what(r)}</div>
+                  </>
+                )}
+              </div>
+            ))}
+            <div className="alignRow">
+              <span style={{ flex: 1 }} />
+              <button disabled={p.busy || changed || !f.rows || changes === 0} onClick={f.onWrite}
+                title={changed ? "Accept this file's placement first — the write takes the accepted placements"
+                  : changes === 0 ? "every file already states this frame"
+                  : "write each file's IfcSite placement and TrueNorth into the IFC itself (no vertex is touched; the previous bytes are saved beside each file). Every program then opens them aligned"}>
+                Write into {changes} file{changes === 1 ? "" : "s"}…
+              </button>
             </div>
           </>
         );
