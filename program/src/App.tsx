@@ -120,7 +120,7 @@ import { parseTariffs, withSample, cardInForce } from "./modules/bom/core/tariff
 import SAMPLE_TARIFF_JSON from "./modules/bom/reference/sample-tariff.json?raw";
 import { BomCostView, BomCostTables, BomFrame, TariffDetails, WeatherMaker, priceBoth, type BomRail, type BomCardSel } from "./modules/bom/view/BomCost.js";
 import type { ZoneSide } from "./modules/bem/core/modelChecks.js";
-import { withLayers, nextAddedSeq, climateZoneOf, type BemLedger, type SiteRuling, type ConstructionRuling, type GroundRuling, type LayerPick, type LayerCustom, type SystemsRuling, type GenerationRuling, type GainRulings } from "./modules/bem/core/bemDb.js";
+import { withLayers, nextAddedSeq, climateZoneOf, type BemLedger, type SiteRuling, type ConstructionRuling, type GroundRuling, type LayerPick, type LayerCustom, type SystemsRuling, type GenerationRuling, type GainRulings, type UnservedChoice } from "./modules/bem/core/bemDb.js";
 import { SCHEDULE_FILES, parseScheduleObjects, profileFor, readProfiles, fitsRole, scheduleFileName, ROLE_KIND, ROLE_LABELS, CODE_DEFAULT_SCHEDULE, DEFAULT_PROFILE_REF, type ScheduleRole, type ScheduleRef } from "./modules/bem/core/schedules.js";
 import { ScheduleCalendar, type CalAt } from "./modules/bem/view/ScheduleCalendar.js";
 import { ScheduleEditor, type EditorSave, type CalMode } from "./modules/bem/view/ScheduleEditor.js";
@@ -2783,6 +2783,13 @@ export function App(): React.ReactElement {
     if (Object.keys(z).length) all[zone] = z; else delete all[zone];
     if (Object.keys(all).length) next.sideApprovals = all; else delete next.sideApprovals;
     setStatus(on ? `${zone} approved to run without ${side} — rebuilding the model` : `${zone}: the approval to run without ${side} taken back`);
+    await applyBemLedger(next, []);
+  };
+  /** A ZONE NO SYSTEM SERVES, RULED (user, 2026-11-20): from its check row on RUN — applied on its own, as a side approval is */
+  const ruleUnserved = async (zone: string, choice: UnservedChoice): Promise<void> => {
+    const next: BemLedger = { ...ledgerOf() };
+    next.unserved = { ...(next.unserved ?? {}), [zone]: { choice, at: new Date().toISOString() } };
+    setStatus(`${zone}: ${choice === "float" ? "unconditioned, its loads passing to the adjoining spaces" : "conditioned by the default district heat/cool"} — rebuilding the model`);
     await applyBemLedger(next, []);
   };
   const setPlumbAssembly = useCallback((a: Assembly): void => { setSysStage((st) => ({ ...st, dhw: { ...(st.dhw ?? {}), assembly: a } })); }, []);
@@ -5653,7 +5660,7 @@ export function App(): React.ReactElement {
             <BemRun structures={runStructures} onCosts={() => setTab("bom-ops")} model={bemModel} bem={bem} engine={bemEngine} idfReady={idfRowsRef.current.length > 0} running={bemRunning}
               lastLine={bemLog[bemLog.length - 1] ?? ""} validation={validation} lens={lens} legend={legend} imperial={imperial} stagedNote={runStagedNote}
               onValidate={() => void validateModel()} onRun={() => (runBlocks.length ? setRunBlocked(true) : void runBem())} onLens={(l) => applyLens(l)}
-              onDock={(d) => toggleSection(d)} isOpen={(d) => open.has(d)} onPrint={() => printAs(`BEM · Run report — ${projectName}`)} onApproveSide={(z, side, on) => void approveSide(z, side, on)} busy={bemBusy} />
+              onDock={(d) => toggleSection(d)} isOpen={(d) => open.has(d)} onPrint={() => printAs(`BEM · Run report — ${projectName}`)} onApproveSide={(z, side, on) => void approveSide(z, side, on)} onRuleUnserved={(z, ch) => void ruleUnserved(z, ch)} busy={bemBusy} />
           )}
           {module === "bem" && tab === "bem-run" && bem && (
             <RunReport bem={bem} model={bemModel} imperial={imperial} project={(pathRef.current.split(/[\\/]/).pop() ?? "").replace(/\.ifc$/i, "")} />

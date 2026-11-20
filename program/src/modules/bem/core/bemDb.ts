@@ -288,6 +288,8 @@ export interface GainRuling {
 }
 /** `transfers` (2026-11-11): the transfer-air paths through a void — room → void → room at the expected air balance (transferAir.ts) */
 export interface GainRulings { zones?: Record<string, GainRuling>; rooms?: Record<string, GainRuling>; transfers?: TransferPath[] }
+export type UnservedChoice = "conditioned" | "float";
+export interface UnservedRuling { choice: UnservedChoice; at: string }
 export interface BemLedger {
   sourceIfcSha256: string;
   savedAt: string;
@@ -318,6 +320,10 @@ export interface BemLedger {
    *  cooling"): by the Zone card's name, when the user approved its heating / cooling switched off. An approved side does not
    *  stop the run; a side switched back on makes its approval moot (it is kept, and read again if the side goes off) */
   sideApprovals?: Record<string, { heating?: string; cooling?: string }>;
+  /** A HEATED-KIND ZONE NO SYSTEM SERVES, RULED (user, 2026-11-20: a check on RUN, in red until answered, a click offering
+   *  "Conditioned default district heat/cool" or "Unconditioned with load transfer to adjoining spaces"): by the zone's name,
+   *  the user's choice and when. Unruled, the zone keeps the default (ideal loads, reported as district heating and cooling) */
+  unserved?: Record<string, UnservedRuling>;
   /** STAGED, NOT YET APPLIED (2026-09-09): what the CONSTRUCTIONS and SITE
    *  tabs hold on their Apply buttons, written as it is staged so a restart
    *  keeps the user's work (the user, 2026-09-09: "the idf db changes were
@@ -477,7 +483,7 @@ export function writeModel(
   for (const r of qa) qput.run([r.subject, r.kind, r.cls, r.gaps, JSON.stringify(r.checks)]);
   qput.free();
   const cput = db.prepare("INSERT INTO checks (rule, subject, verdict, text, fix, data) VALUES (?,?,?,?,?,?)");
-  for (const r of checks) cput.run([r.rule, r.subject, r.verdict, r.text, r.fix, r.sides ? JSON.stringify({ sides: r.sides }) : ""]);
+  for (const r of checks) cput.run([r.rule, r.subject, r.verdict, r.text, r.fix, r.sides || r.ask ? JSON.stringify({ ...(r.sides ? { sides: r.sides } : {}), ...(r.ask ? { ask: r.ask } : {}) }) : ""]);
   cput.free();
   const sha = modelSha(db);
   putMeta(db, "model_sha256", sha);
@@ -959,7 +965,7 @@ export function queryChecks(db: Database): CheckRow[] {
   return (r[0]?.values ?? []).map((v) => {
     const row: CheckRow = { rule: String(v[0]), subject: String(v[1]), verdict: String(v[2]) as CheckRow["verdict"], text: String(v[3]), fix: String(v[4]) };
     const data = String(v[5] ?? "");
-    if (data) { const d = JSON.parse(data) as Pick<CheckRow, "sides">; if (d.sides) row.sides = d.sides; }
+    if (data) { const d = JSON.parse(data) as Pick<CheckRow, "sides" | "ask">; if (d.sides) row.sides = d.sides; if (d.ask) row.ask = d.ask; }
     else if (row.rule === "zone-sides" && row.verdict === "warn") {
       // a file written before 2026-11-03 holds the sides only in the words: read them so a side left off still stops the run
       const m = /^(heating|cooling)(?: and (heating|cooling))? switched off on its Zone card/.exec(row.text);

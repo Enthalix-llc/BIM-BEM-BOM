@@ -1454,3 +1454,11 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .inboxItem .inboxReason { color: var(--text, #d8dde8); margin-bottom: 3px; white-space: pre-wrap; }
 .inboxItem .inboxChange code { font-size: 11px; word-break: break-all; }
 .inboxItem .inboxActs { display: flex; gap: 6px; margin-top: 4px; }
+
+/* A ZONE NO SYSTEM SERVES (2026-11-20): its check row red until answered, a click opening the dialog */
+.qaPanel tr.askOpen td { color: #ff6b6b; }
+.qaPanel tr.ask { cursor: pointer; }
+.qaPanel tr.ask:hover td { background: #1b2130; }
+.dialog.unservedDialog { width: min(560px, 92vw); }
+.dialog .unservedOpt { text-align: left; padding: 6px 8px; line-height: 1.5; white-space: normal; }
+.dialog .unservedOpt.on { border-color: var(--src-user, #e8b04a); }

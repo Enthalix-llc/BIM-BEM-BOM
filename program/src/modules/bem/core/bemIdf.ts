@@ -459,6 +459,9 @@ export interface IdfModel {
   tariff?: { card: TariffCard; pca?: PcaRuling } | null;
   /** the user's rulings per zone (the BEM ledger); anything unset is the code default */
   zones?: Record<string, ZoneOverride>;
+  /** A HEATED-KIND ZONE NO SYSTEM SERVES (2026-11-20), as the user chose on RUN: "float" = unconditioned, inside the envelope,
+   *  its loads passing to its neighbours; "conditioned" or unset = the ideal-loads default */
+  unserved?: Record<string, "conditioned" | "float">;
   /** unset = the code defaults the writer always used */
   site?: IdfSiteSettings;
   /** the RULED types' constructions, by type id (2026-09-08); a type absent here takes the code default */
@@ -858,11 +861,19 @@ export function writeIdf(
   const voidVented = (z: string | null | undefined): boolean => voidRule(z)?.answer === "ceiling";
   const voidInside = (z: string | null | undefined): boolean => !!z && isVoidZone(z) && !voidVented(z);
   const voidGeometryOnly = [...(model.voidRulings ?? new Map<string, VoidRulingIn>())].filter(([, r]) => r.answer === "make-a-void" || r.answer === "shade");
-  const condOf = (z: string): boolean => taken(z) || (ov(z).conditioned ?? voidCond(z) ?? isConditioned(z));
-  /** INSIDE THE THERMAL ENVELOPE — the test the envelope's constructions ask, and NOT `conditioned`, which is about HVAC:
-   *  a sealed void inside the envelope has no thermostat and is still inside. A crawl space or a garage is outside it,
-   *  as `isConditioned` has always said. */
-  const insideEnvelope = (z: string | null): boolean => !!z && (condOf(z) || voidInside(z));
+  /** a zone of the HEATED KIND — a room by its name, a void as ruled, or the ZONES ledger's word: what the envelope asks */
+  const heatedKind = (z: string): boolean => ov(z).conditioned ?? voidCond(z) ?? isConditioned(z);
+  /** A ZONE NO SYSTEM SERVES IS THE USER'S TO RULE (2026-11-20: "spaces which are unconditioned do not have the loads conditioned
+   *  by district heating. The expectation is that adjacent spaces see the transferred heating and cooling loads" — then: a check
+   *  on RUN, red until answered). Unanswered or "conditioned", a heated-kind zone keeps the ideal-loads default (reported as
+   *  district heating and cooling); "float" leaves it unconditioned, so its neighbours take what passes through the walls and
+   *  floors between — and it stays INSIDE the envelope (its walls partitions, its air the house's). */
+  const condOf = (z: string): boolean => taken(z) || (heatedKind(z) && model.unserved?.[z] !== "float");
+  /** INSIDE THE THERMAL ENVELOPE — the test the envelope's constructions and the infiltration ask, and NOT `conditioned`, which is
+   *  about HVAC: a sealed void inside the envelope has no thermostat and is still inside, and so is a room no system serves (its
+   *  walls to its neighbours stay partitions, its air the house's). A crawl space or a garage is outside it, as `isConditioned`
+   *  has always said. */
+  const insideEnvelope = (z: string | null): boolean => !!z && (condOf(z) || heatedKind(z) || voidInside(z));
   /** a void the user ruled: a transfer grille into conditioned space, or a cavity inside the floor assembly, is CONDITIONED —
    *  a stated modelling choice for "it opens into conditioned space", said in the zone's setting; a sealed void inside the
    *  envelope is left unconditioned and floats between its own surfaces, which is what it does */

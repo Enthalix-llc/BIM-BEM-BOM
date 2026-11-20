@@ -17,7 +17,10 @@ export type CheckVerdict = "ok" | "note" | "warn" | "fail";
 export type ZoneSide = "heating" | "cooling";
 /** one answer: the rule asked, what it was asked of, the verdict, in words, and where it is changed; a zone-sides row also
  *  names the sides switched off, those approved, and the zone's rooms (the run's QA reads them; bem.db keeps them in checks.data) */
-export interface CheckRow { rule: string; subject: string; verdict: CheckVerdict; text: string; fix: string; sides?: { off: ZoneSide[]; approved: ZoneSide[]; rooms: string[] } }
+export interface CheckRow { rule: string; subject: string; verdict: CheckVerdict; text: string; fix: string; sides?: { off: ZoneSide[]; approved: ZoneSide[]; rooms: string[] };
+  /** A QUESTION FOR THE USER (2026-11-20): a zone-system row asks how a heated-kind zone no system serves is modelled — red on RUN
+   *  until answered (`choice` null), a click offering the two answers; the zone's rooms named */
+  ask?: { zone: string; choice: "conditioned" | "float" | null; at: string | null; rooms: string[] } }
 
 export const CHECK_RULES: Record<string, string> = {
   "idf-db": "the model is written from idf.db alone — every ruling, library object and the weather held there as values (2026-10-07)",
@@ -46,6 +49,8 @@ export interface CheckInput {
   pv?: { refused: string[]; arrays: number } | null;
   /** the sides the user approved left off, by Zone card name (BemLedger.sideApprovals) */
   approvals?: Record<string, { heating?: string; cooling?: string }>;
+  /** the user's word on each heated-kind zone no system serves (the ledger's `unserved`) */
+  unserved?: Record<string, { choice: "conditioned" | "float"; at: string }>;
 }
 
 export function modelChecks(c: CheckInput): CheckRow[] {
@@ -87,7 +92,15 @@ export function modelChecks(c: CheckInput): CheckRow[] {
   // ZONE SYSTEM: a conditioned zone no system serves
   const bare = zoneNames.filter((z) => c.conditioned(z) && !sysOf(z));
   if (!c.drawn) put("zone-system", "every zone", bare.length ? "note" : "ok", bare.length ? `no systems sheet — ${bare.length} conditioned zones run on ideal loads (the code default)` : "no conditioned zone");
-  else for (const z of bare) put("zone-system", z, "warn", "conditioned, and no system on the sheet serves it", "SYSTEMS › MECHANICAL — draw it on the sheet, or ZONES — mark it unconditioned");
+  // ASKED, NOT ASSUMED (user, 2026-11-20): each such zone is a question on RUN — red until answered, then the answer said
+  else for (const z of bare) {
+    const u = c.unserved?.[z];
+    const rooms = c.gains.rooms.filter((r) => r.zone === z && r.floorM2 > 0).map((r) => r.room).sort();
+    const ask = { zone: z, choice: u?.choice ?? null, at: u?.at ?? null, rooms };
+    if (!u) out.push({ rule: "zone-system", subject: z, verdict: "warn", text: "conditioned, and no system on the sheet serves it — conditioned by the default district heat/cool until you choose", fix: "click to choose: conditioned (district heat/cool), or unconditioned with its loads passing to the adjoining spaces — or draw it on the SYSTEMS sheet", ask });
+    else if (u.choice === "conditioned") out.push({ rule: "zone-system", subject: z, verdict: "note", text: `no system on the sheet serves it — conditioned by the default district heat/cool, as you chose ${u.at.slice(0, 10)}`, fix: "click to change", ask });
+    else out.push({ rule: "zone-system", subject: z, verdict: "note", text: `unconditioned, as you chose ${u.at.slice(0, 10)} — no heating or cooling of its own; its loads pass to the adjoining spaces through the walls and floors between`, fix: "click to change", ask });
+  }
   if (c.drawn && !bare.length) put("zone-system", "every zone", "ok", `every conditioned zone is served — ${zoneNames.filter((z) => sysOf(z)).length} zones on a system`);
 
   // ROOM CONDITIONING: what the default gains do in each room, stated — never a warning (the user, 2026-10-07: "THE GARAGE IS

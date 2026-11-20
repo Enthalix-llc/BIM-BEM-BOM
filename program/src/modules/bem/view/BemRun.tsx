@@ -19,6 +19,9 @@ import { decodeTime } from "../core/eplusSql.js";
 import { endUseTable, fuelShort, fuelLabel, coilRows, unitRows, designStamp, designDayShort, structurePeaks, type StructurePeakSide } from "./runResults.js";
 import { hourDate } from "../core/runCalendar.js";
 import { EnvelopeLosses } from "./EnvelopeLosses.js";
+import { UnservedDialog, type UnservedAsk } from "./UnservedDialog.js";
+import type { UnservedChoice } from "../core/bemDb.js";
+import { useState } from "react";
 
 export interface BemRunProps {
   /** BOM › UTILITY, where a tariff is applied (the user, 2026-09-24 and 2026-10-02: a notice at the Run button when costs are not set) */
@@ -46,6 +49,8 @@ export interface BemRunProps {
   onPrint: () => void;
   /** a side left off on a Zone card, approved or taken back (2026-11-03) */
   onApproveSide: (zone: string, side: ZoneSide, on: boolean) => void;
+  /** a zone no system serves, ruled from its check row (2026-11-20) */
+  onRuleUnserved: (zone: string, choice: UnservedChoice) => void;
   busy: boolean;
 }
 
@@ -54,6 +59,7 @@ const k0 = (v: number): string => v.toLocaleString(undefined, { maximumFractionD
 
 export function BemRun(p: BemRunProps): React.ReactElement {
   const m = p.model, b = p.bem;
+  const [asking, setAsking] = useState<UnservedAsk | null>(null);
   // BEM's own runs: the model on its own weather — BOM's calibration runs are listed there (2026-10-09)
   const designRuns = (m?.runs ?? []).filter((r) => r.kind !== "calibration");
   const area = b?.facility.conditionedAreaM2 ?? 0;
@@ -103,7 +109,8 @@ export function BemRun(p: BemRunProps): React.ReactElement {
           <Fold id="checks" store={STORE} head="checks — the model as built" summary={ck.length ? (open.length ? `${open.length} to look at · ${notes.length} noted · ${rules.length} rules` : `all ${rules.length} rules pass${notes.length ? ` · ${notes.length} noted` : ""}`) : "not checked — rebuild the model"}>
             <div className="qaPanel" title={`each build asks the same questions of the model and keeps every answer in bem.db's checks table:\n${rules.map((r) => `${r}: ${CHECK_RULES[r] ?? ""}`).join("\n")}`}><table><tbody>
               {[...open, ...notes, ...ck.filter((c) => c.verdict === "ok")].map((c, i) => (
-                <tr key={i} title={`${c.rule}: ${CHECK_RULES[c.rule] ?? ""}${c.fix ? `\nchanged in ${c.fix}` : ""}`}>
+                <tr key={i} className={c.ask ? (c.ask.choice ? "ask" : "ask askOpen") : undefined} onClick={c.ask ? () => setAsking(c.ask!) : undefined}
+                  title={`${c.rule}: ${CHECK_RULES[c.rule] ?? ""}${c.ask ? "\nclick to choose how this zone is modelled" : c.fix ? `\nchanged in ${c.fix}` : ""}`}>
                   <td className={c.verdict === "fail" || c.verdict === "warn" ? "src-warn" : c.verdict === "note" ? "src-code" : "muted"}>{c.verdict === "ok" ? "✓" : c.verdict === "note" ? "note" : c.verdict === "fail" ? "✗" : "!"}</td>
                   <td>{c.subject}</td><td>{c.text}{c.fix && c.verdict !== "ok" ? <span className="muted"> — {c.fix}</span> : null}
                     {c.sides && c.sides.off.map((side) => (
@@ -113,6 +120,7 @@ export function BemRun(p: BemRunProps): React.ReactElement {
                 </tr>
               ))}
             </tbody></table></div>
+            {asking && <UnservedDialog ask={asking} busy={p.busy} onCancel={() => setAsking(null)} onChoose={(z, ch) => { setAsking(null); p.onRuleUnserved(z, ch); }} />}
           </Fold>
         );
       })()}
