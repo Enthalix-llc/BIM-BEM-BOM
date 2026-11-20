@@ -1,0 +1,29 @@
+{
+  "name": "bim-bem-bom-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BIM-BEM-BOM's tools for an AI assistant, as an MCP server (stdio): it reads a project folder through the program's own core code and never writes it. Never bundled into the app.",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Enthalix LLC",
+    "email": "342208247+Enthalix-dev@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/Enthalix-llc/BIM-BEM-BOM",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "gate": "tsx scripts/gate.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "sql.js": "1.14.2",
+    "tsx": "4.23.13",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/sql.js": "1.4.11",
+    "typescript": "5.9.3"
+  }
+}

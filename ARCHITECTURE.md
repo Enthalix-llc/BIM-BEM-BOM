@@ -80,3 +80,11 @@ from `idf.db` alone.
 `pnpm typecheck` checks the types, and `pnpm setup:check` checks the
 installation. The end-to-end test suite runs on the developers' own building
 and will be published once it runs on the public sample building.
+
+## Tools for an AI assistant
+
+The app itself has no AI in it. A separate package, `mcp/`, offers the
+program's tools to an AI assistant as an MCP server. It reads a project folder
+through the same core code the app runs and never writes it. Changes stay
+yours: the assistant can read and explain, and you make every ruling in the
+app. See [`mcp/README.md`](mcp/README.md).
