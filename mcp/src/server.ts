@@ -10,11 +10,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Projects, Refusal } from "./project.js";
 import { Tools, LEDGER_KINDS, type Reply } from "./tools.js";
+import { PREVIEW_SECTIONS } from "./preview.js";
 
 const root = process.argv[2];
 if (!root) { process.stderr.write("usage: bim-bem-bom-mcp <projects folder>\n"); process.exit(2); }
 const tools = new Tools(new Projects(root));
-const server = new McpServer({ name: "bim-bem-bom", version: "0.1.0" });
+const server = new McpServer({ name: "bim-bem-bom", version: "0.2.0" });
 
 const project = z.string().describe("the project's folder name, as list_projects gives it");
 const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -57,5 +58,11 @@ server.registerTool("list_runs", { description: "Every run of the project: those
   (a) => answer(() => tools.list_runs(a)));
 server.registerTool("compare_runs", { description: "Two runs side by side: the model each was run on, the weather and engine, and the results, with the facility's differences (b − a).", inputSchema: { project, a: z.string(), b: z.string() }, annotations: ro },
   (a) => answer(() => tools.compare_runs(a)));
+
+server.registerTool("preview_ruling", {
+  description: "The model as it would be with one BEM ruling changed, built the way the app's Apply builds it — in memory, nothing written: the IDF objects added, removed and changed, the settings changed, new checks and rulings not honoured. A change is a ruling in the ledger's own words: a section, an optional key in it, and the value (null removes it). Read the current value with `rulings` first. Only you apply a ruling, in the app.",
+  inputSchema: { project, change: z.object({ section: z.enum(PREVIEW_SECTIONS), key: z.string().optional(), value: z.unknown() }) },
+  annotations: ro,
+}, (a) => answer(() => tools.preview_ruling(a as { project: string; change: { section: (typeof PREVIEW_SECTIONS)[number]; key?: string; value: unknown } })));
 
 await server.connect(new StdioServerTransport());

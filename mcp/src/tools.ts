@@ -20,6 +20,7 @@ import {
 import { decodeTime, J_PER_KWH } from "../../program/src/modules/bem/core/eplusSql.js";
 import { queryBills, queryCalibration } from "../../program/src/modules/bom/core/bomDb.js";
 import { parseExplain } from "../../program/src/explain/explainParse.js";
+import { preview, type Change } from "./preview.js";
 
 export interface Reply { result: unknown; read: ReadFrom[] }
 const LEDGER_KINDS = ["corrections", "bem", "bom"] as const;
@@ -229,6 +230,14 @@ export class Tools {
     const fa = A.facility as Record<string, number> | null | undefined, fb = B.facility as Record<string, number> | null | undefined;
     const delta = fa && fb ? Object.fromEntries(Object.keys(fa).filter((k) => typeof fa[k] === "number" && typeof fb[k] === "number").map((k) => [k, r1(fb[k]! - fa[k]!)])) : null;
     return { result: { a: A, b: B, facilityDeltaBminusA: delta, sameModel: (A.run as { modelSha256?: string } | undefined)?.modelSha256 === (B.run as { modelSha256?: string } | undefined)?.modelSha256 }, read };
+  }
+
+  /** the model as it would be with one BEM ruling changed — built as the app's Apply builds it, in memory; nothing written */
+  async preview_ruling(a: { project: string; change: Change }): Promise<Reply> {
+    const dir = this.projects.folder(a.project);
+    if (!a.change) throw new Refusal("name the change: { section, key?, value }");
+    const r = await preview(dir, a.change);
+    return { result: r.result, read: r.read };
   }
 
   private async ledger(dir: string, kind: LedgerKind): Promise<{ json: unknown; sha: string | null; savedAt: string | null; read: ReadFrom[] }> {

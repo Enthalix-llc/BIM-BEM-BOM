@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 import { Projects, Refusal, KNOWN_SCHEMA, sql } from "../src/project.js";
 import { Tools, type Reply } from "../src/tools.js";
 import { parseTabularCsv } from "../../program/src/modules/bem/core/eplusTables.js";
+import { preview } from "../src/preview.js";
+import { engines } from "../src/environment.js";
 
 const src = process.argv[2];
 if (!src || !fs.existsSync(path.join(src, "project.sqlite"))) { console.error("usage: pnpm gate <project folder holding project.sqlite>"); process.exit(2); }
@@ -154,12 +156,42 @@ if (lrr && lrr.rows.length >= 2) {
   say(!!d && Object.values(d).every((v) => v === 0), "compare_runs of a run with itself: every difference 0");
 }
 
+// PREVIEW (release 2): no change reproduces the model as it stands to the byte (the package builds as the app builds); a real change
+// is seen, proven by the store as the app's Apply proves it, and the project untouched (part 4)
+if (engines.findEngine()) {
+  const t1 = Date.now();
+  const none = await preview(dir, null);
+  say(none.idfNow === none.idfAfter, `PREVIEW with no change: the IDF an Apply would write = the model as it stands, ${none.idfNow.split("\n").length} lines, byte for byte (${Date.now() - t1} ms)`);
+  say(/the app's own idf-db check/.test(String(none.result.storeProof)), `PREVIEW store proof (no change): ${String(none.result.storeProof).slice(0, 60)}…`);
+  const types = idf.exec("SELECT DISTINCT t.name FROM element_types t JOIN elements e ON e.type_id = t.id WHERE t.ifc_class LIKE '%WINDOW%' AND t.name IS NOT NULL ORDER BY t.name")[0]?.values.map((v) => String(v[0])) ?? [];
+  const led = await tools.rulings({ project: name, kind: "bem", key: "constructions" });
+  const ruled = (led.result as { value: Record<string, { source?: string; sameAs?: string }> }).value ?? {};
+  const target = types.find((t) => !ruled[t]?.sameAs) ?? types[0];
+  if (target) {
+    const pr = await call(`preview_ruling (a window type "${target}" at U 1.234, SHGC 0.22)`, () => tools.preview_ruling({ project: name, change: { section: "constructions", key: target, value: { source: "u", uWm2k: 1.234, shgc: 0.22, vt: 0.44 } } }));
+    const o = (pr?.result as { objects: { added: number; removed: number; changed: number }; settingsChanged: Array<{ key: string; now: string | null }>; storeProof: string; identical: boolean } | undefined);
+    const set = o?.settingsChanged.find((x) => x.key === `construction:${target}`);
+    say(!!o && !o.identical && /1\.234/.test(set?.now ?? ""), `PREVIEW sees the change: objects +${o?.objects.added} −${o?.objects.removed} ~${o?.objects.changed}, the type's setting now "${(set?.now ?? "").slice(0, 70)}"`);
+    say(!!o && /the app's own idf-db check/.test(o.storeProof), "PREVIEW store proof (the change): the committed idf.db reproduces the live build to the byte");
+  } else say(false, "PREVIEW: no window type in the file to change");
+  // removing a zone ruling the app does not hold cannot move the model: the answer must say so in words, never an empty diff alone
+  const zr = (await tools.rulings({ project: name, kind: "bem", key: "zones" })).result as { value: Record<string, unknown> };
+  const zone = (idf.exec("SELECT name FROM zones ORDER BY name")[0]?.values ?? []).map((v) => String(v[0])).find((z) => !(z in (zr.value ?? {}))) ?? "";
+  const nz = await tools.preview_ruling({ project: name, change: { section: "zones", key: zone, value: null } });
+  const nzr = nz.result as { noEffect?: string; identical?: boolean };
+  say(nzr.identical === true && !!nzr.noEffect, `PREVIEW removing "${zone}"'s zone ruling (none held) → identical, and said: "${(nzr.noEffect ?? "").slice(0, 60)}…"`);
+} else console.log("  · PREVIEW skipped — no EnergyPlus installed (the engine's datasets are what a ruling resolves against)");
+
 // 3 · the refusals
 await refused("a path outside the projects folder", () => tools.census({ project: "../.." }), /outside the projects folder|no project/);
 await refused("an absolute path elsewhere", () => tools.census({ project: os.homedir() }), /outside the projects folder|no project/);
 await refused("a folder that is not a project", () => tools.census({ project: "data" }), /no project|not a project|outside/);
 await refused("an unknown ledger kind", () => tools.rulings({ project: name, kind: "secrets" as never }), /no ledger kind/);
 await refused("an unknown ledger section", () => tools.rulings({ project: name, kind: "bem", key: "no-such-section" }), /has no section/);
+await refused("a preview of the weather (a file, not in this release)", () => tools.preview_ruling({ project: name, change: { section: "weather" as never, value: { epw: "x.epw" } } }), /not a BEM ruling a preview may change/);
+await refused("a preview of a zone the model lacks", () => tools.preview_ruling({ project: name, change: { section: "zones", key: "No Such Zone", value: { conditioned: true } } }), /no zone "No Such Zone"/);
+await refused("a preview of a type the file lacks", () => tools.preview_ruling({ project: name, change: { section: "constructions", key: "No:Such Type", value: { source: "code" } } }), /no IFC type/);
+await refused("a preview with no value", () => tools.preview_ruling({ project: name, change: { section: "site", value: undefined } }), /needs a value/);
 await refused("a run that does not exist", () => tools.run_results({ project: name, run: "19000101T000000" }), /no run/);
 // a newer schema: a second scratch project whose idf.db claims a schema past the package's
 {
@@ -183,7 +215,7 @@ await refused("a run that does not exist", () => tools.run_results({ project: na
   await client.connect(new StdioClientTransport({ command: tsx, args: [path.resolve(HERE, "..", "src", "server.ts"), scratch], stderr: "pipe" }));
   const listed = (await client.listTools()).tools;
   const names = listed.map((t) => t.name).sort();
-  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "project_summary", "rulings", "run_results", "void_qa", "wall_qa", "zones"];
+  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "preview_ruling", "project_summary", "rulings", "run_results", "void_qa", "wall_qa", "zones"];
   say(JSON.stringify(names) === JSON.stringify(want) && listed.every((t) => t.annotations?.readOnlyHint === true), `SERVER over stdio: ${names.length} tools listed, every one marked read-only`);
   const r = await client.callTool({ name: "run_results", arguments: { project: name } }) as { content: Array<{ text: string }>; isError?: boolean };
   const heat = (JSON.parse(r.content[0]!.text) as { result: { facility: { heatingKwh: number } } }).result.facility.heatingKwh;

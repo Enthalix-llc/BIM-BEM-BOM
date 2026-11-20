@@ -29,9 +29,32 @@ current one.
 | `explain(topic)` | the program's own help text on a field, check or method |
 | `list_runs(project)` | every run of the project, in `bem.db` and in `record/` |
 | `compare_runs(project, a, b)` | two runs side by side, with the differences |
+| `preview_ruling(project, change)` | the model as it would be with one ruling changed: the IDF objects added, removed and changed, the settings changed, new checks, and rulings not honoured |
 
-**Coming in later releases:** previewing a ruling, running a what-if year in EnergyPlus, and proposing a ruling. A
-proposal will wait in the project's inbox until **you** stage and apply it in the app.
+**Coming in later releases:** running a what-if year in EnergyPlus, and proposing a ruling. A proposal will wait in the
+project's inbox until **you** stage and apply it in the app.
+
+### Previewing a ruling
+
+A **change** is one ruling, in the app's own words: a section of the energy-model rulings (`site`, `zones`,
+`constructions`, `ground`, `schedules`, `holidays`, `gains` or `sideApprovals`), an optional key in it, and the value.
+A value of `null` removes the key. Read the current value with `rulings` first. For example:
+
+```json
+{ "section": "constructions", "key": "Window-Casement-Single_Right:29\" x 48\"", "value": { "source": "u", "uWm2k": 1.4, "shgc": 0.25, "vt": 0.45 } }
+```
+
+The preview builds the model the way the app's **Apply** does: the same core code, the engine's datasets, your
+materials, schedules and energy-code tables. It does this in memory, on a copy of `idf.db` that is never saved. It needs
+EnergyPlus installed, because a ruling resolves against the engine's datasets.
+
+Each preview carries:
+
+- **the store proof** that the app's Apply runs (the model rebuilt from the committed rulings must equal the live
+  build, byte for byte);
+- a plain **"no effect"** when the change moves nothing (another ruling may govern it).
+
+Not previewed in this release: the weather file, the SYSTEMS sheet, and the geometry corrections.
 
 ## The rules it keeps
 
@@ -82,6 +105,8 @@ The gate clones the project into a scratch folder and works only on the clone. I
 - the package knows the schemas the program writes;
 - every tool answers, each one checked against an independent read of the same file (direct SQL, and the run's own
   `eplustbl.csv`);
+- a preview with no change reproduces the model as it stands, byte for byte, and a real change shows up with the store
+  proof passing;
 - every refusal holds;
 - the server works over stdio;
 - **every one of the project's files is byte-identical after all the calls.**
