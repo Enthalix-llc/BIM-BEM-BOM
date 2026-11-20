@@ -117,7 +117,15 @@ export function modelChecks(c: CheckInput): CheckRow[] {
   // ROOM IN A ZONE: with a sheet, a room with a floor outside every drawn Zone runs as a zone of its own
   if (c.drawn) {
     const loose = c.gains.rooms.filter((r) => r.floorM2 > 0 && !c.drawn!.roomZone[r.room] && !/^(attic|interstitial)\b/i.test(r.room)).map((r) => r.room);
-    for (const r of loose) put("room-zone", r, "warn", "in no Zone on the sheet — it runs as a zone of its own", "ZONES — put it in a Zone");
+    // the room's side of the same question (user, 2026-11-20): a room of a zone no system serves carries that zone's question —
+    // red until answered on either row, then white with the answer said
+    const asked = new Map(out.filter((x) => x.rule === "zone-system" && x.ask).map((x) => [x.ask!.zone, x.ask!]));
+    for (const r of loose) {
+      const zone = c.gains.rooms.find((x) => x.room === r)?.zone ?? r, ask = asked.get(zone);
+      if (!ask) put("room-zone", r, "warn", "in no Zone on the sheet — it runs as a zone of its own", "ZONES — put it in a Zone");
+      else if (!ask.choice) out.push({ rule: "room-zone", subject: r, verdict: "warn", text: "in no Zone on the sheet — it runs as a zone of its own, conditioned by the default district heat/cool until you choose", fix: "click to choose — or put it in a Zone on the SYSTEMS sheet", ask });
+      else out.push({ rule: "room-zone", subject: r, verdict: "note", text: `in no Zone on the sheet — ${ask.choice === "float" ? "unconditioned, its loads passing to the adjoining spaces" : "conditioned by the default district heat/cool"}, as you chose ${ask.at?.slice(0, 10) ?? ""}`, fix: "click to change", ask });
+    }
     if (!loose.length) put("room-zone", "every room", "ok", `every room with a floor is in one of the sheet's ${c.drawn.zones.length} Zones`);
   }
 
@@ -149,14 +157,15 @@ export interface RunBlockRow { rule: string; subject: string; what: string; how:
 export function runBlocksOf(checks: CheckRow[], codeGap: string | null, opts: { asks: boolean }): RunBlockRow[] {
   const out: RunBlockRow[] = [];
   if (codeGap) out.push({ rule: "energy-code", subject: "the energy code", what: `the energy code's values are incomplete — ${codeGap}`, how: "enter them in SITE › energy code › Choose… › Edit values…" });
+  const askedZones = new Set<string>();   // a zone's question is asked on its row and its rooms' — one stop
   for (const c of checks) {
     if (c.rule === "zone-sides" && c.sides) for (const side of c.sides.off.filter((s) => !c.sides!.approved.includes(s)))
       out.push({ rule: c.rule, subject: c.subject, side, what: `${c.subject}: ${side} is switched off${c.sides.rooms.length ? ` — ${c.sides.rooms.join(", ")}` : ""}`,
         how: `switch it on in the Zone card's thermostat (SYSTEMS › MECHANICAL), or approve running ${c.subject} without ${side}` });
     if (c.rule === "pv-sheet" && c.verdict === "fail" && !/is refused \(see the /.test(c.text))
       out.push({ rule: c.rule, subject: c.subject, what: `the PV is not written: ${c.text}`, how: "fix the array on SYSTEMS › ELECTRICAL (untick the panels), or the file's placement in BIM › Open IFC › Edit Alignment" });
-    if (opts.asks && c.ask && c.ask.choice === null)
-      out.push({ rule: c.rule, subject: c.subject, what: `${c.subject}: conditioned, and no system on the sheet serves it — not yet answered`, how: "answer it on RUN › checks (click the red row): conditioned by the default district heat/cool, or unconditioned with its loads passing to the adjoining spaces" });
+    if (opts.asks && c.ask && c.ask.choice === null && !askedZones.has(c.ask.zone) && askedZones.add(c.ask.zone))
+      out.push({ rule: c.rule, subject: c.ask.zone, what: `${c.ask.zone}: conditioned, and no system on the sheet serves it — not yet answered`, how: "answer it on RUN › checks (click the red row): conditioned by the default district heat/cool, or unconditioned with its loads passing to the adjoining spaces" });
   }
   return out;
 }

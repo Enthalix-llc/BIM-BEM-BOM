@@ -195,7 +195,7 @@ if (engines.findEngine()) {
   let runsMayGo = true;
   if (blocks.length) {
     await refused(`a scenario while ${blocks.length} check${blocks.length === 1 ? "" : "s"} wait on the user (${blocks.map((b) => b.subject).join(", ")})`, () => tools.run_scenario({ project: name }), /waits on \d+ check/);
-    if (blocks.every((b) => b.rule === "zone-system")) {
+    if (blocks.every((b) => b.rule === "zone-system" || b.rule === "room-zone")) {
       const pf = path.join(dir, "project.sqlite");
       const pdb = new SQL.Database(new Uint8Array(fs.readFileSync(pf)));
       const ifcSha = await openIfcSha(dir);
