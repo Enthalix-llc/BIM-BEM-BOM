@@ -139,3 +139,24 @@ export function modelChecks(c: CheckInput): CheckRow[] {
   }
   return out;
 }
+
+/** WHAT STOPS A RUN, read from the model's own checks (2026-11-20: "the MCP should see the checks for clearing before allowing a run"):
+ *  the one rule the app's Run box and the MCP package's run_scenario share. A zone side switched off and not approved; an array the
+ *  ELECTRICAL sheet holds that cannot be written (one refused only because the card feeding it is, is not repeated); the energy code's
+ *  values incomplete; and — `asks` — each heated-kind zone no system serves that the user has not yet answered (the red rows). What the
+ *  app also stops on (no engine, no envelope, a ruling staged and not applied) is the app's own state, not the model's. */
+export interface RunBlockRow { rule: string; subject: string; what: string; how: string; side?: ZoneSide }
+export function runBlocksOf(checks: CheckRow[], codeGap: string | null, opts: { asks: boolean }): RunBlockRow[] {
+  const out: RunBlockRow[] = [];
+  if (codeGap) out.push({ rule: "energy-code", subject: "the energy code", what: `the energy code's values are incomplete — ${codeGap}`, how: "enter them in SITE › energy code › Choose… › Edit values…" });
+  for (const c of checks) {
+    if (c.rule === "zone-sides" && c.sides) for (const side of c.sides.off.filter((s) => !c.sides!.approved.includes(s)))
+      out.push({ rule: c.rule, subject: c.subject, side, what: `${c.subject}: ${side} is switched off${c.sides.rooms.length ? ` — ${c.sides.rooms.join(", ")}` : ""}`,
+        how: `switch it on in the Zone card's thermostat (SYSTEMS › MECHANICAL), or approve running ${c.subject} without ${side}` });
+    if (c.rule === "pv-sheet" && c.verdict === "fail" && !/is refused \(see the /.test(c.text))
+      out.push({ rule: c.rule, subject: c.subject, what: `the PV is not written: ${c.text}`, how: "fix the array on SYSTEMS › ELECTRICAL (untick the panels), or the file's placement in BIM › Open IFC › Edit Alignment" });
+    if (opts.asks && c.ask && c.ask.choice === null)
+      out.push({ rule: c.rule, subject: c.subject, what: `${c.subject}: conditioned, and no system on the sheet serves it — not yet answered`, how: "answer it on RUN › checks (click the red row): conditioned by the default district heat/cool, or unconditioned with its loads passing to the adjoining spaces" });
+  }
+  return out;
+}

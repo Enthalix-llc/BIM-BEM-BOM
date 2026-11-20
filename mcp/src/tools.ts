@@ -22,6 +22,7 @@ import { queryBills, queryCalibration } from "../../program/src/modules/bom/core
 import { parseExplain } from "../../program/src/explain/explainParse.js";
 import { preview, type Change } from "./preview.js";
 import { runScenario } from "./scenario.js";
+import { runBlocksOf } from "../../program/src/modules/bem/core/modelChecks.js";
 import { propose, listProposals } from "./propose.js";
 
 export interface Reply { result: unknown; read: ReadFrom[] }
@@ -125,7 +126,10 @@ export class Tools {
     const qa = querySystemQa(bem.db);
     return {
       result: {
-        checks: { ok: count("ok"), note: count("note"), warn: count("warn"), fail: count("fail"), rows: checks.map((c) => ({ rule: c.rule, subject: c.subject, verdict: c.verdict, text: c.text, fix: c.fix })) },
+        checks: { ok: count("ok"), note: count("note"), warn: count("warn"), fail: count("fail"), rows: checks.map((c) => ({ rule: c.rule, subject: c.subject, verdict: c.verdict, text: c.text, fix: c.fix, ...(c.ask ? { question: c.ask.choice ? `answered: ${c.ask.choice === "float" ? "unconditioned, loads to the adjoining spaces" : "conditioned by the default district heat/cool"}` : "NOT ANSWERED — the user answers it on RUN" } : {}) })) },
+        // what must be cleared before a run, by the user, in the app — run_scenario refuses while any stands (the energy code's
+        // completeness is not in bem.db's checks; preview_ruling and run_scenario read it from the model they build)
+        clearBeforeRun: (() => { const b = runBlocksOf(checks, null, { asks: true }); return b.length ? b.map((x) => ({ what: x.what, how: x.how })) : "nothing — run_scenario may run"; })(),
         systemQa: { rows: qa.length, withGaps: qa.filter((r) => r.gaps > 0).length, detail: qa },
       },
       read: [bem.from],

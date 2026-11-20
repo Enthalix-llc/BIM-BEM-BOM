@@ -119,7 +119,7 @@ import { ieccFor, codeCatalogue, catalogueKindOf, type IdfModel } from "./module
 import { parseTariffs, withSample, cardInForce } from "./modules/bom/core/tariff.js";
 import SAMPLE_TARIFF_JSON from "./modules/bom/reference/sample-tariff.json?raw";
 import { BomCostView, BomCostTables, BomFrame, TariffDetails, WeatherMaker, priceBoth, type BomRail, type BomCardSel } from "./modules/bom/view/BomCost.js";
-import type { ZoneSide } from "./modules/bem/core/modelChecks.js";
+import { runBlocksOf, type ZoneSide } from "./modules/bem/core/modelChecks.js";
 import { withLayers, nextAddedSeq, climateZoneOf, type BemLedger, type SiteRuling, type ConstructionRuling, type GroundRuling, type LayerPick, type LayerCustom, type SystemsRuling, type GenerationRuling, type GainRulings, type UnservedChoice } from "./modules/bem/core/bemDb.js";
 import { SCHEDULE_FILES, parseScheduleObjects, profileFor, readProfiles, fitsRole, scheduleFileName, ROLE_KIND, ROLE_LABELS, CODE_DEFAULT_SCHEDULE, DEFAULT_PROFILE_REF, type ScheduleRole, type ScheduleRef } from "./modules/bem/core/schedules.js";
 import { ScheduleCalendar, type CalAt } from "./modules/bem/view/ScheduleCalendar.js";
@@ -2847,19 +2847,14 @@ export function App(): React.ReactElement {
   const runBlocks: RunBlock[] = [
     ...(bemEngine === null ? [{ what: "EnergyPlus is not installed", how: "install it (see SETUP.md), then restart the program" }] : []),
     ...(idfRowsRef.current.length === 0 ? [{ what: "no envelope is built", how: "open an IFC file in BIM", tab: "bim-edit" as TabId }] : []),
-    ...(bemModel?.report.codeGap ? [{ what: `the energy code's values are incomplete — ${bemModel.report.codeGap}`, how: "enter them in SITE › energy code › Choose… › Edit values…", tab: "bem-site" as TabId }] : []),
     ...runStaged.map((x) => ({ what: `${x.what} staged and not applied`, how: `Apply or Save it on ${TABS.find((t) => t.id === x.tab)?.label ?? x.tab}`, tab: x.tab })),
-    // A SIDE LEFT OFF (user, 2026-11-03): each zone whose heating or cooling is switched off on its Zone card, naming its rooms,
-    // until the side is switched on or approved here
-    ...(bemModel?.checks ?? []).flatMap((c) => (c.rule === "zone-sides" && c.sides ? c.sides.off.filter((s) => !c.sides!.approved.includes(s)).map((side) => ({
-      what: `${c.subject}: ${side} is switched off${c.sides!.rooms.length ? ` — ${c.sides!.rooms.join(", ")}` : ""}`,
-      how: `switch it on in the Zone card's thermostat (SYSTEMS › MECHANICAL), or approve running ${c.subject} without ${side}`, tab: "bem-systems" as TabId,
-      approve: { label: `approve: ${c.subject} runs without ${side}`, onApprove: () => void approveSide(c.subject, side, true) },
-    })) : [])),
-    // THE PV AS DRAWN (user, 2026-11-03): an array the ELECTRICAL sheet holds and the build cannot write — never a silent loss of the PV
-    // (a card refused only because the card feeding it is — "(see the arrays)" — is in RUN › checks, not repeated here)
-    ...(bemModel?.checks ?? []).filter((c) => c.rule === "pv-sheet" && c.verdict === "fail" && !/is refused \(see the /.test(c.text)).map((c) => ({
-      what: `the PV is not written: ${c.text}`, how: "fix the array on SYSTEMS › ELECTRICAL (untick the panels), or the file's placement in BIM › Open IFC › Edit Alignment", tab: "bem-systems" as TabId })),
+    // WHAT THE MODEL'S CHECKS STOP (2026-11-20): one rule with the MCP package's run_scenario (modelChecks.runBlocksOf) — a side left
+    // off and not approved (user, 2026-11-03), a PV array the sheet cannot write, the energy code incomplete. The red questions of a zone
+    // no system serves are NOT a stop in the app (asks: false): they run on the default until answered, said in RUN › checks
+    ...runBlocksOf(bemModel?.checks ?? [], bemModel?.report.codeGap ?? null, { asks: false }).map((b): RunBlock => ({
+      what: b.what, how: b.how, tab: (b.rule === "energy-code" ? "bem-site" : "bem-systems") as TabId,
+      ...(b.side ? { approve: { label: `approve: ${b.subject} runs without ${b.side}`, onApprove: () => void approveSide(b.subject, b.side!, true) } } : {}),
+    })),
   ];
   // the box clears itself once nothing stands in the way
   useEffect(() => { if (runBlocked && runBlocks.length === 0) { setRunBlocked(false); setStatus("nothing stands in the way of the run — Run EnergyPlus when ready"); } }, [runBlocked, runBlocks.length]);

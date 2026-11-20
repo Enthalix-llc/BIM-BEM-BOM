@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { Projects, Refusal, KNOWN_SCHEMA, sql } from "../src/project.js";
+import { Projects, Refusal, KNOWN_SCHEMA, sql, openIfcSha } from "../src/project.js";
 import { Tools, type Reply } from "../src/tools.js";
 import { parseTabularCsv } from "../../program/src/modules/bem/core/eplusTables.js";
 import { preview } from "../src/preview.js";
@@ -188,7 +188,30 @@ if (engines.findEngine()) {
   say(nzr.identical === true && !!nzr.noEffect, `PREVIEW removing "${zone}"'s zone ruling (none held) → identical, and said: "${(nzr.noEffect ?? "").slice(0, 60)}…"`);
   // SCENARIO (release 3): a year in the engine, run the way the app runs it. With no change, on the model the last run was run on,
   // it must reproduce that run; with the window change it must run clean and move the year. GATE_NO_RUN=1 skips the two years.
-  if (!process.env.GATE_NO_RUN) {
+  // THE CHECKS CLEARED FIRST (2026-11-20): a run waits on what only the user clears — run_scenario refuses, naming each; model_checks
+  // lists them. The gate then answers the questions of zones no system serves ON ITS OWN CLONE, as the user would in the app — with the
+  // default ("conditioned"), so the model is unchanged — and the scenario runs go on. Any other stop leaves the runs out, said.
+  const blocks = none.after.runBlocks;
+  let runsMayGo = true;
+  if (blocks.length) {
+    await refused(`a scenario while ${blocks.length} check${blocks.length === 1 ? "" : "s"} wait on the user (${blocks.map((b) => b.subject).join(", ")})`, () => tools.run_scenario({ project: name }), /waits on \d+ check/);
+    if (blocks.every((b) => b.rule === "zone-system")) {
+      const pf = path.join(dir, "project.sqlite");
+      const pdb = new SQL.Database(new Uint8Array(fs.readFileSync(pf)));
+      const ifcSha = await openIfcSha(dir);
+      const row = pdb.exec("SELECT json FROM ledgers WHERE sha=? AND kind='bem'", [ifcSha ?? ""])[0]?.values[0];
+      const led = JSON.parse(String(row?.[0] ?? "{}")) as { unserved?: Record<string, { choice: string; at: string }> };
+      led.unserved = { ...(led.unserved ?? {}), ...Object.fromEntries(blocks.map((b) => [b.subject, { choice: "conditioned", at: new Date().toISOString() }])) };
+      pdb.run("UPDATE ledgers SET json=? WHERE sha=? AND kind='bem'", [JSON.stringify(led), ifcSha ?? ""]);
+      fs.writeFileSync(pf, pdb.export()); pdb.close();
+      before.set("project.sqlite", crypto.createHash("sha256").update(fs.readFileSync(pf)).digest("hex"));   // the gate's own answer, not the package's write
+      const again = (await preview(dir, null)).after.runBlocks;
+      say(again.length === 0, `CHECKS CLEARED: the gate answered ${blocks.length} on its clone as the user would ("conditioned", the default) → ${again.length} stops left`);
+    } else { runsMayGo = false; console.log(`  · SCENARIO runs left out — stops only the user can clear: ${blocks.map((b) => b.what).join(" · ")}`); }
+  }
+  const mc = (await tools.model_checks({ project: name })).result as { clearBeforeRun: unknown };
+  say(mc.clearBeforeRun !== undefined, `model_checks lists what must be cleared before a run: ${JSON.stringify(mc.clearBeforeRun).slice(0, 100)}`);
+  if (!process.env.GATE_NO_RUN && runsMayGo) {
     type Fac = { heatingKwh: number; coolingKwh: number };
     type Sc = { engine: { completed: boolean; fatal: number; severe: number; seconds: number }; scenario: { facility: Fac | null }; lastRun: { facility: Fac | null } | null; against: string; facilityDelta: Record<string, number> | null };
     const s0 = (await call("run_scenario (no change)", () => tools.run_scenario({ project: name })))?.result as Sc | undefined;
@@ -213,7 +236,7 @@ if (engines.findEngine()) {
       say(/the difference is this change alone/.test(s1a), `SCENARIO (the window change) knows the last run is the same model but for the change: "${s1a.slice(0, 120)}"`);
     const kept = fs.existsSync(path.join(dir, "cache", "mcp", "runs")) ? fs.readdirSync(path.join(dir, "cache", "mcp", "runs")).length : 0;
     say(kept >= 1 && kept <= KEEP_RUNS, `SCENARIO runs kept in cache/mcp/runs: ${kept} (at most ${KEEP_RUNS})`);
-  } else console.log("  · SCENARIO skipped (GATE_NO_RUN)");
+  } else if (process.env.GATE_NO_RUN) console.log("  · SCENARIO skipped (GATE_NO_RUN)");
 } else console.log("  · PREVIEW skipped — no EnergyPlus installed (the engine's datasets are what a ruling resolves against)");
 
 // PROPOSE (release 4): the change left in inbox/ in the program's own format — read back by the app's reader, the scenario carried when

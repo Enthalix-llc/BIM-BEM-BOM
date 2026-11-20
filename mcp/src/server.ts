@@ -41,7 +41,7 @@ server.registerTool("wall_qa", { description: "The wall QA: one row per exposed 
   (a) => answer(() => tools.wall_qa(a)));
 server.registerTool("void_qa", { description: "Each attic or floor cavity the program built, what closes it above and below, its flags, and the user's ruling on where the insulation sits, if any.", inputSchema: { project }, annotations: ro },
   (a) => answer(() => tools.void_qa(a)));
-server.registerTool("model_checks", { description: "The model's checks (ok, note, warning, failure, each with its fix in words) and the system QA (each loop, air loop and zone against the eight rules).", inputSchema: { project }, annotations: ro },
+server.registerTool("model_checks", { description: "The model's checks (ok, note, warning, failure, each with its fix in words), what the user must clear in the app before a run (clearBeforeRun — run_scenario refuses while any stands) and the system QA (each loop, air loop and zone against the eight rules).", inputSchema: { project }, annotations: ro },
   (a) => answer(() => tools.model_checks(a)));
 server.registerTool("zones", { description: "Each thermal zone as written: its rooms, conditioned or not, thermostat setpoints (°C), infiltration, and each room's people, lights and equipment.", inputSchema: { project }, annotations: ro },
   (a) => answer(() => tools.zones(a)));
@@ -67,7 +67,7 @@ server.registerTool("preview_ruling", {
 }, (a) => answer(() => tools.preview_ruling(a as { project: string; change: { section: (typeof PREVIEW_SECTIONS)[number]; key?: string; value: unknown } })));
 
 server.registerTool("run_scenario", {
-  description: "A year in EnergyPlus on the model as it would be with one BEM ruling changed (the same change as preview_ruling), or with no change on the model as it stands — run the way the app's RUN runs it, and returned beside the project's last run: end uses by fuel, peaks, unmet hours, and the differences. Takes about as long as a run in the app (a minute or more); progress is sent as the engine works. Writes only the scenario's own folder, cache/mcp/runs/<stamp>/ (the newest 5 kept) — never the model, the rulings or the app's runs. Only you apply a ruling, in the app.",
+  description: "Refused while the model has checks only the user can clear (model_checks lists them as clearBeforeRun: a zone side switched off, a PV array not written, a zone no system serves not yet answered). Otherwise a year in EnergyPlus on the model as it would be with one BEM ruling changed (the same change as preview_ruling), or with no change on the model as it stands — run the way the app's RUN runs it, and returned beside the project's last run: end uses by fuel, peaks, unmet hours, and the differences. Takes about as long as a run in the app (a minute or more); progress is sent as the engine works. Writes only the scenario's own folder, cache/mcp/runs/<stamp>/ (the newest 5 kept) — never the model, the rulings or the app's runs. Only you apply a ruling, in the app.",
   inputSchema: { project, change: z.object({ section: z.enum(PREVIEW_SECTIONS), key: z.string().optional(), value: z.unknown() }).optional() },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, (a, extra) => {

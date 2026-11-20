@@ -14,6 +14,7 @@ import { parseIdfObjects } from "../../program/src/modules/bem/core/idfLib.js";
 import { DEFAULT_EPW, type WeatherRead } from "../../program/src/modules/bem/core/weather.js";
 import type { BemLedger } from "../../program/src/modules/bem/core/bemDb.js";
 import type { BuiltModel } from "../../program/src/modules/bem/core/bemModel.js";
+import { runBlocksOf, type RunBlockRow } from "../../program/src/modules/bem/core/modelChecks.js";
 import { Refusal, sql, projectDb, needDb, openIfcSha, rows, type ReadFrom } from "./project.js";
 import { buildEnv, engines } from "./environment.js";
 
@@ -32,7 +33,7 @@ const idfOf = (b: BuiltModel, weather: WeatherRead | null): string => writeOf(b,
 
 /** what a run of the model after the change needs (run_scenario): the IDF, the weather's own texts, whether the templates expand,
  *  and the code gap that stops the app's own run */
-export interface AfterModel { idf: string; weather: ModelWeather | null; expand: boolean; codeGap: string | null }
+export interface AfterModel { idf: string; weather: ModelWeather | null; expand: boolean; codeGap: string | null; runBlocks: RunBlockRow[] }
 
 /** the applied rulings with the change made; refused, by name, when the change is not a ruling the ledger defines */
 export function applyChange(ledger: BemLedger, c: Change, known: { zones: Set<string>; types: Set<string> }): BemLedger {
@@ -107,7 +108,9 @@ export async function preview(dir: string, change: Change | null): Promise<{ res
   work.close();
   const wAfter = writeOf(b.built, b.weather);
   const idfAfter = wAfter.idf;
-  const after: AfterModel = { idf: idfAfter, weather: weatherT, expand: !!b.built.model.idealLoads, codeGap: wAfter.report.codeGap ?? null };
+  // what stands in the way of a run of this model — the app's own rule, with the user's unanswered questions counted (modelChecks.runBlocksOf)
+  const runBlocks = runBlocksOf(b.built.checks, wAfter.report.codeGap ?? null, { asks: true });
+  const after: AfterModel = { idf: idfAfter, weather: weatherT, expand: !!b.built.model.idealLoads, codeGap: wAfter.report.codeGap ?? null, runBlocks };
 
   // THE DIFFERENCE
   const A = objects(idfNow), B = objects(idfAfter);
@@ -145,6 +148,7 @@ export async function preview(dir: string, change: Change | null): Promise<{ res
       settingsChanged: settings,
       checksNew: [...cb].filter((x) => !ca.has(x)), checksGone: [...ca].filter((x) => !cb.has(x)),
       notHonoured: refusedAfter.filter((x) => !refusedNow.has(x)),
+      runBlocks: runBlocks.length ? runBlocks.map((x) => ({ what: x.what, how: x.how })) : "none — a run of this model may go",
       builtOn: { weather: weatherFrom, climateZone: stored.zone ? `${stored.zone.zone} (${stored.zone.county} County, ${stored.zone.state})` : "none held", tariff: stored.tariff ? "the tariff idf.db holds" : "none", environment: env.notes },
       ...(heldDiffers.length ? { alsoCarried: `the rulings the app holds already differ from the model in: ${heldDiffers.join(", ")} — an Apply would carry these too, and they are in this difference` } : {}),
       note: "built in memory as the app's Apply builds it; nothing written. Apply it in the app to make it the model.",

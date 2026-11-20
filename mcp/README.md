@@ -65,6 +65,13 @@ app's **RUN** does: the same IDF, the same weather, the same report units, the r
 beside the project's last run: end uses by fuel, peaks, unmet hours per zone, and the differences. It also says whether
 the last run was on the same model and the same weather, so a difference is read for what it is.
 
+**A run waits on what only you can clear.** `run_scenario` refuses while the model has a check the app's Run stops on (a
+zone's heating or cooling switched off and not approved, a PV array that cannot be written, incomplete energy-code values),
+or a question you have not answered on RUN (a zone no system serves: conditioned by the default district heat/cool, or
+unconditioned with its loads passing to the adjoining spaces). The refusal names each one and where you clear it.
+`model_checks` lists them as `clearBeforeRun` (from `bem.db`, as the app last built it), and `preview_ruling` lists them for the
+model after the change. The assistant cannot clear them.
+
 A run takes about as long as one in the app (a minute and a half on a large house). The server sends progress as the
 engine works; if your client stops waiting sooner, raise its tool timeout (in Claude Code, `MCP_TOOL_TIMEOUT`).
 

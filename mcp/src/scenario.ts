@@ -58,7 +58,9 @@ export async function runScenario(dir: string, change: Change | null, onLine: (l
   if (!eng) throw new Refusal("no EnergyPlus installed — a scenario is a year in the engine");
   const pv = await preview(dir, change);
   const { after } = pv;
-  if (after.codeGap) throw new Refusal(`the app would not run this model: ${after.codeGap}`);
+  // THE CHECKS CLEARED FIRST (the user, 2026-11-20: "the MCP should see the checks for clearing before allowing a run"): what the app
+  // stops a run on, read from the model's own checks, and every question the user has not yet answered — each named with where it is cleared
+  if (after.runBlocks.length) throw new Refusal(`a run waits on ${after.runBlocks.length} check${after.runBlocks.length === 1 ? "" : "s"} only the user can clear, in the app: ${after.runBlocks.map((b) => `${b.what} (${b.how})`).join(" · ")}`);
   if (!after.weather) throw new Refusal("the model holds no weather file — choose the project's weather on BEM › SITE and Apply, in the app");
 
   // the project's last design run, and the report units it was written in (its own in.idf, in the app's run folder)
