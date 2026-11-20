@@ -68,10 +68,11 @@ export async function runScenario(dir: string, change: Change | null, onLine: (l
   const last = [...runs].reverse().find((r) => r.kind !== "calibration") ?? null;
   const lastIdfFile = last ? path.join(dir, "data", "bem", "runs", last.stamp, "in.idf") : null;
   const lastIdf = lastIdfFile && fs.existsSync(lastIdfFile) ? fs.readFileSync(lastIdfFile, "utf8") : null;
-  const units: "si" | "ip" = lastIdf !== null && withReportUnits(after.idf, "ip") === lastIdf ? "ip" : "si";
+  // the last run is the same model when the model AS IT STANDS (without this change) is its in.idf, in either report units
+  const units: "si" | "ip" = lastIdf !== null && withReportUnits(pv.idfNow, "ip") === lastIdf ? "ip" : "si";
   const idf = withReportUnits(after.idf, units);
   const weatherName = path.basename(after.weather.path);
-  const sameModel = lastIdf === null ? null : idf === lastIdf;
+  const sameModel = lastIdf === null ? null : withReportUnits(pv.idfNow, units) === lastIdf;
   const sameWeather = last?.epw ? path.basename(last.epw) === weatherName : null;
 
   // the scenario's own folder, by its real path (the app's rule: EnergyPlus takes a linked folder and its real one for two places)
@@ -124,7 +125,7 @@ export async function runScenario(dir: string, change: Change | null, onLine: (l
     }
   // the scenario's summary beside its files: what propose_ruling reads to carry this year in a proposal (the change must be the same)
   const against = before === null ? "the project has no run yet — run it in the app (RUN) to compare against"
-    : `the project's last run ${last!.stamp}: ${sameModel === null ? "its in.idf is not on disk, so whether it is the same model is not known" : sameModel ? "the same model, byte for byte" : "a DIFFERENT model (the project changed since that run, besides this change)"}; ${sameWeather === null ? "its weather not recorded" : sameWeather ? "the same weather" : `other weather (${path.basename(last!.epw ?? "")})`}`;
+    : `the project's last run ${last!.stamp}: ${sameModel === null ? "its in.idf is not on disk, so whether it is the same model is not known" : sameModel ? `the same model as this scenario's without the change, byte for byte${change ? " — the difference is this change alone" : ""}` : "a DIFFERENT model (the project changed since that run, besides this change)"}; ${sameWeather === null ? "its weather not recorded" : sameWeather ? "the same weather" : `other weather (${path.basename(last!.epw ?? "")})`}`;
   const facOf = (x: Record<string, unknown> | null, k: string): number | null => { const f = x?.facility as Record<string, unknown> | null | undefined; return typeof f?.[k] === "number" ? (f[k] as number) : null; };
   fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify({
     change, idfContentSha256: (await needDb(dir, "idf")).from.contentSha256, completed: err.completed, fatal: err.fatal, severe: err.severe,

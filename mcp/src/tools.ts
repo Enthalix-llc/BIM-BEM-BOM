@@ -292,14 +292,15 @@ export function results(db: Database, stamp: string, full: boolean): Record<stri
   const fac = queryResults(db, stamp, "facility", "heating");
   const f = (m: string): number | null => { const v = queryResults(db, stamp, "facility", m).get(""); return v === undefined ? null : v; };
   const facility = fac.size ? { heatingKwh: r1(f("heating") ?? 0), coolingKwh: r1(f("cooling") ?? 0), unmetHeatingH: f("unmet_heating"), unmetCoolingH: f("unmet_cooling"),
-    peakHeatingW: f("peak_heating_w"), peakHeatingTime: timeOf(f("peak_heating_time")), peakCoolingW: f("peak_cooling_w"), peakCoolingTime: timeOf(f("peak_cooling_time")),
+    districtPeakHeatingW: f("peak_heating_w"), districtPeakHeatingTime: timeOf(f("peak_heating_time")), districtPeakCoolingW: f("peak_cooling_w"), districtPeakCoolingTime: timeOf(f("peak_cooling_time")),
     conditionedAreaM2: f("conditioned_area"), totalAreaM2: f("total_area") } : null;
   const endUsesByFuel: Record<string, Record<string, number>> = {};
   for (const c of queryEndUses(db, stamp)) (endUsesByFuel[c.fuel] ??= {})[c.row] = r1(c.value);
   const { peaks, times } = queryFuelPeaks(db, stamp);
   const fuelPeaks = [...new Set(peaks.map((p) => p.fuel))].map((fuel) => ({ fuel, time: timeOf(times.get(fuel) ?? null), rowsW: Object.fromEntries(peaks.filter((p) => p.fuel === fuel).map((p) => [p.row, r1(p.w)])) }));
   const unmet = (m: string): Record<string, number> => Object.fromEntries([...(queryMonthlyByZone(db, stamp, m))].map(([z, v]) => [z, r1(v.reduce((s, x) => s + x, 0))]).filter(([, v]) => (v as number) > 0));
-  const out: Record<string, unknown> = { facility, endUsesByFuel, endUseUnits: "kWh", fuelPeaks, unmetHoursByZone: { heating: unmet("Zone Heating Setpoint Not Met Time"), cooling: unmet("Zone Cooling Setpoint Not Met Time") } };
+  const out: Record<string, unknown> = { facility, endUsesByFuel, endUseUnits: "kWh", fuelPeaks,
+    peaksNote: "districtPeak* is the coincident peak of the District Heating Water / District Cooling columns only — the zones on ideal loads, not the whole building; each fuel's own coincident peak (electricity included), by end use, is in fuelPeaks", unmetHoursByZone: { heating: unmet("Zone Heating Setpoint Not Met Time"), cooling: unmet("Zone Cooling Setpoint Not Met Time") } };
   if (full) {
     out.monthlyMetersKwh = Object.fromEntries([...queryMonthlyMeters(db, stamp)].map(([m, v]) => [m, v.map(kwh)]));
     out.coils = querySizingDetails(db, stamp).filter((s) => s.kind === "coil" && /Coil Final Gross Total Capacity|Coil Final Reference Air Volume Flow Rate|HVAC Name|Coil Type/.test(s.field))

@@ -194,7 +194,7 @@ if (engines.findEngine()) {
     const s0 = (await call("run_scenario (no change)", () => tools.run_scenario({ project: name })))?.result as Sc | undefined;
     const f0 = s0?.scenario.facility, l0 = s0?.lastRun?.facility;
     say(!!s0 && s0.engine.completed && s0.engine.fatal === 0 && s0.engine.severe === 0, `SCENARIO (no change): EnergyPlus completed, Fatal ${s0?.engine.fatal} · Severe ${s0?.engine.severe}, ${s0?.engine.seconds} s — heating ${f0?.heatingKwh} · cooling ${f0?.coolingKwh} kWh`);
-    if (s0 && /the same model, byte for byte; the same weather/.test(s0.against))
+    if (s0 && /the same model as this scenario.s without the change, byte for byte; the same weather/.test(s0.against))
       say(!!f0 && !!l0 && Math.abs(f0.heatingKwh - l0.heatingKwh) <= 0.5 && Math.abs(f0.coolingKwh - l0.coolingKwh) <= 0.5, `SCENARIO (no change) reproduces the last run: heating ${l0?.heatingKwh} → ${f0?.heatingKwh}, cooling ${l0?.coolingKwh} → ${f0?.coolingKwh} kWh (${s0.against})`);
     else console.log(`  · SCENARIO (no change) not compared to the last run: ${s0?.against}`);
     const winTypes = idf.exec("SELECT DISTINCT t.name FROM element_types t JOIN elements e ON e.type_id = t.id WHERE t.ifc_class LIKE '%WINDOW%' AND t.name IS NOT NULL ORDER BY t.name")[0]?.values.map((v) => String(v[0])) ?? [];
@@ -208,6 +208,9 @@ if (engines.findEngine()) {
         `SCENARIO (the window change): Fatal ${s1?.engine.fatal} · Severe ${s1?.engine.severe}, heating ${f0?.heatingKwh} → ${f1?.heatingKwh}, cooling ${f0?.coolingKwh} → ${f1?.coolingKwh} kWh; against the last run ${JSON.stringify(s1?.facilityDelta ?? null).slice(0, 80)}`);
     }
     scenarioStamps.push(...[s0, s1Result].map((x) => (x as { stamp?: string } | undefined)?.stamp).filter((x): x is string => !!x));
+    const s1a = (s1Result as Sc | null)?.against ?? "";
+    if (s0 && /byte for byte; the same weather/.test(s0.against))
+      say(/the difference is this change alone/.test(s1a), `SCENARIO (the window change) knows the last run is the same model but for the change: "${s1a.slice(0, 120)}"`);
     const kept = fs.existsSync(path.join(dir, "cache", "mcp", "runs")) ? fs.readdirSync(path.join(dir, "cache", "mcp", "runs")).length : 0;
     say(kept >= 1 && kept <= KEEP_RUNS, `SCENARIO runs kept in cache/mcp/runs: ${kept} (at most ${KEEP_RUNS})`);
   } else console.log("  · SCENARIO skipped (GATE_NO_RUN)");
