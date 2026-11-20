@@ -3,7 +3,7 @@
 //
 // THE MCP SERVER (stdio): an assistant's client starts it as a local process with the projects folder as its one argument —
 //   tsx src/server.ts ~/Documents/Enthalix/Projects
-// No network port. Every tool is a read (this first release); the tools are fixed, take named arguments checked here, and
+// No network port. Every tool reads, but run_scenario, which writes only its own run folder (cache/mcp/runs); the tools are fixed, take named arguments checked here, and
 // run no code, shell command or SQL they are handed. The app itself ships none of this (the user's ruling, 2026-11-17).
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -15,7 +15,7 @@ import { PREVIEW_SECTIONS } from "./preview.js";
 const root = process.argv[2];
 if (!root) { process.stderr.write("usage: bim-bem-bom-mcp <projects folder>\n"); process.exit(2); }
 const tools = new Tools(new Projects(root));
-const server = new McpServer({ name: "bim-bem-bom", version: "0.2.0" });
+const server = new McpServer({ name: "bim-bem-bom", version: "0.3.0" });
 
 const project = z.string().describe("the project's folder name, as list_projects gives it");
 const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -64,5 +64,19 @@ server.registerTool("preview_ruling", {
   inputSchema: { project, change: z.object({ section: z.enum(PREVIEW_SECTIONS), key: z.string().optional(), value: z.unknown() }) },
   annotations: ro,
 }, (a) => answer(() => tools.preview_ruling(a as { project: string; change: { section: (typeof PREVIEW_SECTIONS)[number]; key?: string; value: unknown } })));
+
+server.registerTool("run_scenario", {
+  description: "A year in EnergyPlus on the model as it would be with one BEM ruling changed (the same change as preview_ruling), or with no change on the model as it stands — run the way the app's RUN runs it, and returned beside the project's last run: end uses by fuel, peaks, unmet hours, and the differences. Takes about as long as a run in the app (a minute or more); progress is sent as the engine works. Writes only the scenario's own folder, cache/mcp/runs/<stamp>/ (the newest 5 kept) — never the model, the rulings or the app's runs. Only you apply a ruling, in the app.",
+  inputSchema: { project, change: z.object({ section: z.enum(PREVIEW_SECTIONS), key: z.string().optional(), value: z.unknown() }).optional() },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+}, (a, extra) => {
+  const token = extra._meta?.progressToken;
+  let n = 0;
+  const onLine = (l: string): void => {
+    if (token === undefined) return;
+    void extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: ++n, message: l.slice(0, 200) } }).catch(() => {});
+  };
+  return answer(() => tools.run_scenario(a as { project: string; change?: { section: (typeof PREVIEW_SECTIONS)[number]; key?: string; value: unknown } }, onLine));
+});
 
 await server.connect(new StdioServerTransport());

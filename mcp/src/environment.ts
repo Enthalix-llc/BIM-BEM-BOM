@@ -27,6 +27,7 @@ export const engines = req(path.join(PROGRAM, "electron", "engineLocate.cjs")) a
   findEngine: () => { exe: string; dir: string; version: string; majorMinor: string | null; others?: Array<{ dir: string }> } | null;
   weatherDirs: (root: string, engine: unknown) => string[];
   resolveEpw: (p: string, dirs: string[]) => string | null;
+  spawnArgs: (exe: string, args: string[]) => { exe: string; args: string[]; shell: boolean };
 };
 
 export interface BuildEnv {

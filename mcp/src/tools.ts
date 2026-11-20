@@ -21,6 +21,7 @@ import { decodeTime, J_PER_KWH } from "../../program/src/modules/bem/core/eplusS
 import { queryBills, queryCalibration } from "../../program/src/modules/bom/core/bomDb.js";
 import { parseExplain } from "../../program/src/explain/explainParse.js";
 import { preview, type Change } from "./preview.js";
+import { runScenario } from "./scenario.js";
 
 export interface Reply { result: unknown; read: ReadFrom[] }
 const LEDGER_KINDS = ["corrections", "bem", "bom"] as const;
@@ -240,6 +241,14 @@ export class Tools {
     return { result: r.result, read: r.read };
   }
 
+  /** a year in EnergyPlus on the model with one ruling changed (or as it stands), beside the project's last run; written only into
+   *  the scenario's own folder, cache/mcp/runs/<stamp>/ */
+  async run_scenario(a: { project: string; change?: Change | null }, onLine?: (l: string) => void): Promise<Reply> {
+    const dir = this.projects.folder(a.project);
+    const r = await runScenario(dir, a.change ?? null, onLine);
+    return { result: r.result, read: r.read };
+  }
+
   private async ledger(dir: string, kind: LedgerKind): Promise<{ json: unknown; sha: string | null; savedAt: string | null; read: ReadFrom[] }> {
     const p = await projectDb(dir);
     const sha = await openIfcSha(dir) ?? null;
@@ -252,19 +261,19 @@ export class Tools {
 
 const plain = (html: string): string => html.replace(/<li>/g, "- ").replace(/<\/(p|li)>/g, "\n").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
 
-function pickRun(runs: BemRun[], stamp?: string): BemRun {
+export function pickRun(runs: BemRun[], stamp?: string): BemRun {
   if (!runs.length) throw new Refusal("no run in bem.db yet — run the model in the app (RUN)");
   if (stamp) { const r = runs.find((x) => x.stamp === stamp); if (!r) throw new Refusal(`no run ${stamp} in bem.db — list_runs lists them`); return r; }
   return [...runs].reverse().find((r) => r.kind !== "calibration") ?? runs[runs.length - 1]!;
 }
 
-function runSummary(r: BemRun): Record<string, unknown> {
+export function runSummary(r: BemRun): Record<string, unknown> {
   return { stamp: r.stamp, kind: r.kind ?? "design", weather: r.epw ? r.epw.split(/[\\/]/).pop() : null, engine: r.energyplusVersion, completed: r.completed, exitCode: r.exitCode,
     fatal: r.fatal, severe: r.severe, warning: r.warning, seconds: r.seconds, modelSha256: r.modelSha256 ?? null };
 }
 
 /** a run's results from bem.db: the facility, end uses by fuel, peaks, unmet hours per zone — and, in full, the monthly meters and the coils */
-function results(db: Database, stamp: string, full: boolean): Record<string, unknown> {
+export function results(db: Database, stamp: string, full: boolean): Record<string, unknown> {
   const fac = queryResults(db, stamp, "facility", "heating");
   const f = (m: string): number | null => { const v = queryResults(db, stamp, "facility", m).get(""); return v === undefined ? null : v; };
   const facility = fac.size ? { heatingKwh: r1(f("heating") ?? 0), coolingKwh: r1(f("cooling") ?? 0), unmetHeatingH: f("unmet_heating"), unmetCoolingH: f("unmet_cooling"),

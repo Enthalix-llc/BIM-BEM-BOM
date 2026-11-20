@@ -6,7 +6,8 @@
 //   1. the package knows the schemas the program writes (the numbers read from the program's own source);
 //   2. every tool answers, each read tool against an independent reading of the same file (raw SQL, the engine's own CSV);
 //   3. every refusal holds — a path outside the folder, an unknown ledger kind or section, a run that does not exist, a newer schema;
-//   4. THE PROJECT'S FILES ARE BYTE-IDENTICAL after every call (every file's sha256 before and after).
+//   4. THE PROJECT'S FILES ARE BYTE-IDENTICAL after every call (every file's sha256 before and after) — a scenario adds files to its
+//      own folder, cache/mcp/runs/, and nowhere else.
 // The original project is only read, to clone it. Exit 1 on any ✗.
 import fs from "node:fs";
 import os from "node:os";
@@ -18,6 +19,7 @@ import { Tools, type Reply } from "../src/tools.js";
 import { parseTabularCsv } from "../../program/src/modules/bem/core/eplusTables.js";
 import { preview } from "../src/preview.js";
 import { engines } from "../src/environment.js";
+import { KEEP_RUNS } from "../src/scenario.js";
 
 const src = process.argv[2];
 if (!src || !fs.existsSync(path.join(src, "project.sqlite"))) { console.error("usage: pnpm gate <project folder holding project.sqlite>"); process.exit(2); }
@@ -180,6 +182,29 @@ if (engines.findEngine()) {
   const nz = await tools.preview_ruling({ project: name, change: { section: "zones", key: zone, value: null } });
   const nzr = nz.result as { noEffect?: string; identical?: boolean };
   say(nzr.identical === true && !!nzr.noEffect, `PREVIEW removing "${zone}"'s zone ruling (none held) → identical, and said: "${(nzr.noEffect ?? "").slice(0, 60)}…"`);
+  // SCENARIO (release 3): a year in the engine, run the way the app runs it. With no change, on the model the last run was run on,
+  // it must reproduce that run; with the window change it must run clean and move the year. GATE_NO_RUN=1 skips the two years.
+  if (!process.env.GATE_NO_RUN) {
+    type Fac = { heatingKwh: number; coolingKwh: number };
+    type Sc = { engine: { completed: boolean; fatal: number; severe: number; seconds: number }; scenario: { facility: Fac | null }; lastRun: { facility: Fac | null } | null; against: string; facilityDelta: Record<string, number> | null };
+    const s0 = (await call("run_scenario (no change)", () => tools.run_scenario({ project: name })))?.result as Sc | undefined;
+    const f0 = s0?.scenario.facility, l0 = s0?.lastRun?.facility;
+    say(!!s0 && s0.engine.completed && s0.engine.fatal === 0 && s0.engine.severe === 0, `SCENARIO (no change): EnergyPlus completed, Fatal ${s0?.engine.fatal} · Severe ${s0?.engine.severe}, ${s0?.engine.seconds} s — heating ${f0?.heatingKwh} · cooling ${f0?.coolingKwh} kWh`);
+    if (s0 && /the same model, byte for byte; the same weather/.test(s0.against))
+      say(!!f0 && !!l0 && Math.abs(f0.heatingKwh - l0.heatingKwh) <= 0.5 && Math.abs(f0.coolingKwh - l0.coolingKwh) <= 0.5, `SCENARIO (no change) reproduces the last run: heating ${l0?.heatingKwh} → ${f0?.heatingKwh}, cooling ${l0?.coolingKwh} → ${f0?.coolingKwh} kWh (${s0.against})`);
+    else console.log(`  · SCENARIO (no change) not compared to the last run: ${s0?.against}`);
+    const winTypes = idf.exec("SELECT DISTINCT t.name FROM element_types t JOIN elements e ON e.type_id = t.id WHERE t.ifc_class LIKE '%WINDOW%' AND t.name IS NOT NULL ORDER BY t.name")[0]?.values.map((v) => String(v[0])) ?? [];
+    const cRuled = ((await tools.rulings({ project: name, kind: "bem", key: "constructions" })).result as { value: Record<string, { sameAs?: string }> }).value ?? {};
+    const win = winTypes.find((t) => !cRuled[t]?.sameAs) ?? winTypes[0];
+    if (win) {
+      const s1 = (await call(`run_scenario (the window type "${win}" at U 1.234, SHGC 0.22)`, () => tools.run_scenario({ project: name, change: { section: "constructions", key: win, value: { source: "u", uWm2k: 1.234, shgc: 0.22, vt: 0.44 } } })))?.result as Sc | undefined;
+      const f1 = s1?.scenario.facility;
+      say(!!s1 && s1.engine.completed && s1.engine.fatal === 0 && !!f1 && !!f0 && (f1.heatingKwh !== f0.heatingKwh || f1.coolingKwh !== f0.coolingKwh),
+        `SCENARIO (the window change): Fatal ${s1?.engine.fatal} · Severe ${s1?.engine.severe}, heating ${f0?.heatingKwh} → ${f1?.heatingKwh}, cooling ${f0?.coolingKwh} → ${f1?.coolingKwh} kWh; against the last run ${JSON.stringify(s1?.facilityDelta ?? null).slice(0, 80)}`);
+    }
+    const kept = fs.existsSync(path.join(dir, "cache", "mcp", "runs")) ? fs.readdirSync(path.join(dir, "cache", "mcp", "runs")).length : 0;
+    say(kept >= 1 && kept <= KEEP_RUNS, `SCENARIO runs kept in cache/mcp/runs: ${kept} (at most ${KEEP_RUNS})`);
+  } else console.log("  · SCENARIO skipped (GATE_NO_RUN)");
 } else console.log("  · PREVIEW skipped — no EnergyPlus installed (the engine's datasets are what a ruling resolves against)");
 
 // 3 · the refusals
@@ -192,6 +217,7 @@ await refused("a preview of the weather (a file, not in this release)", () => to
 await refused("a preview of a zone the model lacks", () => tools.preview_ruling({ project: name, change: { section: "zones", key: "No Such Zone", value: { conditioned: true } } }), /no zone "No Such Zone"/);
 await refused("a preview of a type the file lacks", () => tools.preview_ruling({ project: name, change: { section: "constructions", key: "No:Such Type", value: { source: "code" } } }), /no IFC type/);
 await refused("a preview with no value", () => tools.preview_ruling({ project: name, change: { section: "site", value: undefined } }), /needs a value/);
+await refused("a scenario of the weather (a file, not in this release)", () => tools.run_scenario({ project: name, change: { section: "weather" as never, value: { epw: "x.epw" } } }), /not a BEM ruling a preview may change/);
 await refused("a run that does not exist", () => tools.run_results({ project: name, run: "19000101T000000" }), /no run/);
 // a newer schema: a second scratch project whose idf.db claims a schema past the package's
 {
@@ -215,8 +241,8 @@ await refused("a run that does not exist", () => tools.run_results({ project: na
   await client.connect(new StdioClientTransport({ command: tsx, args: [path.resolve(HERE, "..", "src", "server.ts"), scratch], stderr: "pipe" }));
   const listed = (await client.listTools()).tools;
   const names = listed.map((t) => t.name).sort();
-  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "preview_ruling", "project_summary", "rulings", "run_results", "void_qa", "wall_qa", "zones"];
-  say(JSON.stringify(names) === JSON.stringify(want) && listed.every((t) => t.annotations?.readOnlyHint === true), `SERVER over stdio: ${names.length} tools listed, every one marked read-only`);
+  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "preview_ruling", "project_summary", "rulings", "run_results", "run_scenario", "void_qa", "wall_qa", "zones"];
+  say(JSON.stringify(names) === JSON.stringify(want) && listed.every((t) => (t.annotations?.readOnlyHint === true) === (t.name !== "run_scenario")), `SERVER over stdio: ${names.length} tools listed, every one marked read-only but run_scenario (it writes its own run folder)`);
   const r = await client.callTool({ name: "run_results", arguments: { project: name } }) as { content: Array<{ text: string }>; isError?: boolean };
   const heat = (JSON.parse(r.content[0]!.text) as { result: { facility: { heatingKwh: number } } }).result.facility.heatingKwh;
   say(!r.isError && heat === rres?.facility?.heatingKwh, `SERVER run_results over stdio: heating ${heat} kWh, the same as the direct call`);
@@ -228,8 +254,11 @@ await refused("a run that does not exist", () => tools.run_results({ project: na
 // 4 · nothing written
 const after = hashTree(dir);
 const changed = [...before].filter(([f, h]) => after.get(f) !== h).map(([f]) => f);
+const ownRuns = path.join("cache", "mcp", "runs") + path.sep;
 const added = [...after.keys()].filter((f) => !before.has(f));
-say(changed.length === 0 && added.length === 0 && after.size === before.size, `THE PROJECT'S FILES BYTE-IDENTICAL after every call: ${before.size} files, changed ${changed.length}, added ${added.length}${changed.length ? ` (${changed.slice(0, 5).join(", ")})` : ""}`);
+const addedElsewhere = added.filter((f) => !f.startsWith(ownRuns));
+const gone = [...before.keys()].filter((f) => !after.has(f));
+say(changed.length === 0 && addedElsewhere.length === 0 && gone.length === 0, `THE PROJECT'S FILES BYTE-IDENTICAL after every call: ${before.size} files, changed ${changed.length}, removed ${gone.length}, added ${addedElsewhere.length} outside the scenarios' own folder${changed.length ? ` (${changed.slice(0, 5).join(", ")})` : ""}${addedElsewhere.length ? ` (${addedElsewhere.slice(0, 5).join(", ")})` : ""} · ${added.length - addedElsewhere.length} files in ${ownRuns}`);
 
 fs.rmSync(scratch, { recursive: true, force: true });
 console.log(ok ? "gate:mcp ✓" : "gate:mcp ✗");

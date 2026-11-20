@@ -24,10 +24,15 @@ export type PreviewSection = (typeof PREVIEW_SECTIONS)[number];
 export interface Change { section: PreviewSection; key?: string; value: unknown }
 
 const CAP = 40;
-const idfOf = (b: BuiltModel, weather: WeatherRead | null): string => {
+const writeOf = (b: BuiltModel, weather: WeatherRead | null): ReturnType<typeof writeIdf> => {
   const i = b.input;
-  return writeIdf(i.faces, i.elements, i.zoneVolumesM3, i.site, i.trueNorth, i.sourceIfcName, weather, b.model).idf;
+  return writeIdf(i.faces, i.elements, i.zoneVolumesM3, i.site, i.trueNorth, i.sourceIfcName, weather, b.model);
 };
+const idfOf = (b: BuiltModel, weather: WeatherRead | null): string => writeOf(b, weather).idf;
+
+/** what a run of the model after the change needs (run_scenario): the IDF, the weather's own texts, whether the templates expand,
+ *  and the code gap that stops the app's own run */
+export interface AfterModel { idf: string; weather: ModelWeather | null; expand: boolean; codeGap: string | null }
 
 /** the applied rulings with the change made; refused, by name, when the change is not a ruling the ledger defines */
 export function applyChange(ledger: BemLedger, c: Change, known: { zones: Set<string>; types: Set<string> }): BemLedger {
@@ -61,7 +66,7 @@ function objects(idf: string): Map<string, Obj> {
   return out;
 }
 
-export async function preview(dir: string, change: Change | null): Promise<{ result: Record<string, unknown>; read: ReadFrom[]; idfNow: string; idfAfter: string }> {
+export async function preview(dir: string, change: Change | null): Promise<{ result: Record<string, unknown>; read: ReadFrom[]; idfNow: string; idfAfter: string; after: AfterModel }> {
   const idfFile = path.join(dir, "data", "idf.db");
   const idfHeld = await needDb(dir, "idf");   // the schema check, and what the reply says it read
   const bytes = new Uint8Array(fs.readFileSync(idfFile));
@@ -100,7 +105,9 @@ export async function preview(dir: string, change: Change | null): Promise<{ res
   const liveIdf = commitModel(work, { ledger: next, library: env.library, weather: weatherT, zone: stored.zone, model: env.model, schema: env.schema, tariff: stored.tariff });
   const b = buildFromStore(work, env.model, env.schema)!;
   work.close();
-  const idfAfter = idfOf(b.built, b.weather);
+  const wAfter = writeOf(b.built, b.weather);
+  const idfAfter = wAfter.idf;
+  const after: AfterModel = { idf: idfAfter, weather: weatherT, expand: !!b.built.model.idealLoads, codeGap: wAfter.report.codeGap ?? null };
 
   // THE DIFFERENCE
   const A = objects(idfNow), B = objects(idfAfter);
@@ -124,7 +131,7 @@ export async function preview(dir: string, change: Change | null): Promise<{ res
   const heldDiffers = Object.keys({ ...stored.ledger, ...ledger }).filter((k) => !["staged", "savedAt", "sourceIfcSha256"].includes(k)
     && JSON.stringify((stored.ledger as unknown as Record<string, unknown>)[k] ?? null) !== JSON.stringify((ledger as unknown as Record<string, unknown>)[k] ?? null));
   return {
-    idfNow, idfAfter,
+    idfNow, idfAfter, after,
     result: {
       change, identical: idfNow === idfAfter,
       ...(change && idfNow === idfAfter ? { noEffect: "the IDF is the same with this change — the ruling has no effect on this model (another ruling may govern it: a zone's thermostat, for one, is set on its Zone card in the SYSTEMS sheet)" } : {}),

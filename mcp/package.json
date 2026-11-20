@@ -1,6 +1,6 @@
 {
   "name": "bim-bem-bom-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "BIM-BEM-BOM's tools for an AI assistant, as an MCP server (stdio): it reads a project folder through the program's own core code and never writes it. Never bundled into the app.",
   "license": "Apache-2.0",

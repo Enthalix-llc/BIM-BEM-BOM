@@ -8,7 +8,8 @@ any other MCP client) starts this package as a local process and talks to it ove
 
 ## What it does
 
-The package **reads** your projects. It never writes them. Every number it returns comes from the program's own
+The package **reads** your projects. It never changes them: the one thing it writes is a what-if run's own folder,
+`cache/mcp/runs/` inside the project (see below). Every number it returns comes from the program's own
 core code, the same code the app runs, reading your project's own files (`project.sqlite` and `data/*.db`). Every reply
 names the files it read, with each file's content sha and when it was written, so an old result cannot pass for a
 current one.
@@ -30,8 +31,9 @@ current one.
 | `list_runs(project)` | every run of the project, in `bem.db` and in `record/` |
 | `compare_runs(project, a, b)` | two runs side by side, with the differences |
 | `preview_ruling(project, change)` | the model as it would be with one ruling changed: the IDF objects added, removed and changed, the settings changed, new checks, and rulings not honoured |
+| `run_scenario(project, change?)` | a year in EnergyPlus on that model (or on the model as it stands), beside the project's last run, with the differences |
 
-**Coming in later releases:** running a what-if year in EnergyPlus, and proposing a ruling. A proposal will wait in the
+**Coming in a later release:** proposing a ruling. A proposal will wait in the
 project's inbox until **you** stage and apply it in the app.
 
 ### Previewing a ruling
@@ -56,11 +58,27 @@ Each preview carries:
 
 Not previewed in this release: the weather file, the SYSTEMS sheet, and the geometry corrections.
 
+### Running a scenario
+
+`run_scenario` takes the same change as `preview_ruling`, or none. It runs the model for a year in EnergyPlus the way the
+app's **RUN** does: the same IDF, the same weather, the same report units, the results read the same way. It returns them
+beside the project's last run: end uses by fuel, peaks, unmet hours per zone, and the differences. It also says whether
+the last run was on the same model and the same weather, so a difference is read for what it is.
+
+A run takes about as long as one in the app (a minute and a half on a large house). The server sends progress as the
+engine works; if your client stops waiting sooner, raise its tool timeout (in Claude Code, `MCP_TOOL_TIMEOUT`).
+
+The run's files go in `cache/mcp/runs/<stamp>/` inside the project, and only there: the IDF, the weather, the
+engine's output and `change.json` naming the change. The newest 5 are kept; the package removes older ones of its own
+and nothing else. The model, the rulings, `bem.db` and the app's runs are never touched, so a scenario is not in the
+app's RUN list.
+
 ## The rules it keeps
 
 - **A fixed set of tools.** No tool runs code, a shell command or SQL it is handed. Each takes named arguments,
   checked before it acts.
-- **It never writes your project.** Every file is read into memory; nothing is opened for writing.
+- **It never changes your project.** Every file is read into memory; nothing the app reads is opened for writing. A
+  scenario writes only its own folder, `cache/mcp/runs/`.
 - **It stays in the projects folder.** A path outside it is refused.
 - **It refuses newer files.** A file written by a newer schema than the package knows is refused, with the reason.
 
@@ -107,9 +125,12 @@ The gate clones the project into a scratch folder and works only on the clone. I
   `eplustbl.csv`);
 - a preview with no change reproduces the model as it stands, byte for byte, and a real change shows up with the store
   proof passing;
+- a scenario with no change reproduces the project's last run (when that run was on the same model and weather), and a
+  real change runs clean and moves the year (`GATE_NO_RUN=1` skips the two years);
 - every refusal holds;
 - the server works over stdio;
-- **every one of the project's files is byte-identical after all the calls.**
+- **every one of the project's files is byte-identical after all the calls**, with new files only in
+  `cache/mcp/runs/`.
 
 The original project is only read, to clone it.
 
