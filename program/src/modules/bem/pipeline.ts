@@ -25,6 +25,7 @@ import { stampIdfContentSha } from "../../core/stale.js";
 import { buildModel, DEFAULT_MODEL, type BuiltModel, type BemSetting } from "./core/bemModel.js";
 import { readRunSql, type RunResults, type EndUseCell, type FuelPeak, type SizingDetail, type ComponentLoad } from "./core/eplusSql.js";
 import { parseErr, type ErrSummary } from "./core/eplusErr.js";
+import { RECORD_FILES, runSummary } from "./core/runRecord.js";
 import {
   openBemDb, writeModel, writeRun, stampBemContentSha, queryBemSurfaces, queryNotEmitted, queryResults, queryResultRows, queryDailyMeters, queryHourly, queryTariffs, provenanceCensus,
   queryEndUses, queryFuelPeaks, querySizingDetails, queryDesignSurfaceTemps, queryCoilRates, queryComponentLoads, queryZoneBalance, queryMonthlyMeters, queryMonthlyByZone,
@@ -147,6 +148,9 @@ export async function weatherTextsFor(epw: string | null, ledger: BemLedger | nu
   const text = await window.bem.readText(p);
   return text ? { path: p, epw: text, ddy: ddy ?? null } : null;
 }
+/** idf.db holds a weather file of the model's (a table, a row) */
+const hasModelWeather = (db: Database): boolean => (db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='model_weather'")[0]?.values.length ?? 0) > 0
+  && (db.exec("SELECT COUNT(*) FROM model_weather")[0]?.values[0]?.[0] as number) > 0;
 export const weatherOfTexts = (t: ModelWeather, ledger: BemLedger | null): WeatherRead | null => weatherOfStore(t, ledger?.site?.designDays);
 
 export interface BuildOpts {
@@ -216,7 +220,13 @@ export async function buildBemModel(SQL: SqlJsStatic, opts: BuildOpts): Promise<
   let liveIdf: string | null = null;
   if (opts.commit || !holdsModel(db)) {
     const ledger: BemLedger = opts.ledger ?? { sourceIfcSha256: "", savedAt: "", zones: {}, constructions: {} };
-    liveIdf = commitModel(db, { ledger, library: opts.library ?? null, weather: await weatherTextsFor(opts.epw, ledger), zone: opts.zone ?? null, model, schema: opts.schema ?? null, tariff: opts.tariff ?? null });
+    // THE WEATHER A COMMIT TAKES (2026-11-20): the one named (the run's, else the rulings'); when none is named, the one idf.db already
+    // holds — a commit never swaps the model's weather by itself (the house named none, and under the program's default the next Apply
+    // would have run it on Golden, Colorado); only with neither does the program's default stand in, said in the checks
+    const named = opts.epw ?? ledger.weather?.epw ?? null;
+    const held = !named && hasModelWeather(db) ? (db.exec("SELECT path, epw, ddy FROM model_weather LIMIT 1")[0]?.values[0] ?? null) : null;
+    const weatherT: ModelWeather | null = held ? { path: String(held[0]), epw: String(held[1]), ddy: held[2] == null ? null : String(held[2]) } : await weatherTextsFor(named, ledger);
+    liveIdf = commitModel(db, { ledger, library: opts.library ?? null, weather: weatherT, zone: opts.zone ?? null, model, schema: opts.schema ?? null, tariff: opts.tariff ?? null });
     stampIdfContentSha(db);
     const out = db.export();
     db.close();
@@ -230,6 +240,10 @@ export async function buildBemModel(SQL: SqlJsStatic, opts: BuildOpts): Promise<
   const mi = built.input;   // the zones drawn on the sheet merged (2026-09-10)
   const w = writeIdf(mi.faces, mi.elements, mi.zoneVolumesM3, mi.site, mi.trueNorth, mi.sourceIfcName, weather, built.model);
   built.checks.push(modelStoreCheck(stored, liveIdf, w.idf));
+  // the program's default weather standing in for one the project never named — loud, never silent (2026-11-20)
+  const heldName = stored.weather?.path.split(/[\\/]/).pop() ?? null;
+  if (!opts.ledger?.weather?.epw && (heldName === null || heldName === DEFAULT_EPW))
+    built.checks.push({ rule: "weather", subject: "the weather file", verdict: "warn", text: heldName ? `no weather file is named for this project — the program's default, ${DEFAULT_EPW}, is in the model` : "no weather file is named for this project and none is in the model", fix: "choose the project's weather file on BEM › SITE, then Apply" });
   // THE SYSTEM QA (2026-09-12) reads the IDF as written — the text the engine reads — and names what a loop, an air loop
   // or a zone is missing; it needs the schema to key the fields, and without one says nothing rather than guessing
   const qa = opts.schema ? systemQa(w.idf, opts.schema, { conditioned: w.report.zoneRows.filter((z) => z.conditioned.value).map((z) => z.epName) }) : [];
@@ -248,6 +262,21 @@ export async function buildBemModel(SQL: SqlJsStatic, opts: BuildOpts): Promise<
   const res = readBack(again, { input, built, weather, report: w.report, idf: w.idf }, opts.readMeta);
   again.close();
   return { ...res, idfMeta, modelStore: { committedAt: stored.committedAt, libraryCount: stored.libraryCount, committed: liveIdf !== null } };
+}
+
+/** THE RUN RECORD (2026-11-20): the run's files and its summary kept in the project's record/<stamp>/ — what the model was built from read
+ *  out of bem.db's own meta, as written; a failure to record is said, never fatal (the run itself is in bem.db) */
+async function recordRun(db: Database, run: BemRun, results: RunResults | null, ledgerSavedAt: string | null, onProgress: (line: string) => void): Promise<void> {
+  const meta = new Map<string, string>();
+  for (const [k, v] of db.exec("SELECT key, value FROM meta")[0]?.values ?? []) meta.set(String(k), String(v));
+  try {
+    const r = await window.bem.writeRecord(run.stamp, RECORD_FILES, runSummary(run, results, {
+      idfContentSha256: meta.get("source_idf_sha256") ?? null, ifcSha256: meta.get("source_ifc_sha256") ?? null,
+      ledgerSavedAt, project: window.projectNow?.name ?? null }));
+    if ("dir" in r) onProgress(`recorded in record/${run.stamp}/ — ${r.files.join(", ")} (${(r.bytes / 1e6).toFixed(1)} MB)${r.missing.length ? ` · not written by the engine: ${r.missing.join(", ")}` : ""}`);
+    else if ("skipped" in r) onProgress(`not recorded: ${r.skipped}`);
+    else onProgress(`the run record failed: ${r.error} — the run itself is in bem.db`);
+  } catch (e) { onProgress(`the run record failed: ${e instanceof Error ? e.message : String(e)} — the run itself is in bem.db`); }
 }
 
 /** the whole run, from the file to bem.db */
@@ -290,6 +319,7 @@ export async function runBemPipeline(
   bdb.close();
   await window.bim.saveDb("bem.db", out);
   const again = new SQL.Database(out);
+  await recordRun(again, run, results, opts.ledger?.savedAt ?? null, opts.onProgress);
   const base = readBack(again, m, opts.readMeta);
   const outcome = runOutcome(again, base, stamp, run, err, results);
   again.close();
@@ -333,6 +363,7 @@ export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; 
   bdb.close();
   await window.bim.saveDb("bem.db", out);
   const again = new SQL.Database(out);
+  await recordRun(again, run, results, null, opts.onProgress);
   const hourly = queryHourly(again, stamp);
   again.close();
   return { run, err, hourly };

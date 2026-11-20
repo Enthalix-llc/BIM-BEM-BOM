@@ -53,7 +53,8 @@ interface CorrectionsLedger {
 
 /** a save or a backup, as the main process reports it (2026-09-23): a failure is shown on every tab until dismissed */
 /** the project in force: its folder, name, the template it started from, its data-sources record and the IFC it last had open */
-interface ProjectNow { dir: string; name: string; template: string | null; sources: unknown; openIfc: string | null }
+interface ProjectBackup { dir: string; parent: string; at: string; bytes: number; parts: string[] }
+interface ProjectNow { dir: string; name: string; template: string | null; sources: unknown; openIfc: string | null; lastBackup?: ProjectBackup | null }
 interface SaveStatus { kind: "save" | "backup"; ok: boolean; what?: string; error?: string; committed?: boolean; pushed?: boolean; at: string }
 interface Window {
   /** THE PROJECT IN FORCE (2026-11-12, a project is a folder): read at the page's start; null when none is open */
@@ -74,6 +75,8 @@ interface Window {
     examples(): Promise<Array<{ name: string; ifcs: string[] }>>;
     example(name: string): Promise<{ dir: string; ifcs: string[] }>;
     reveal(): Promise<boolean>;
+    /** Back up project… (2026-11-20): the irreplaceable parts into a dated folder the user picks */
+    backup(): Promise<ProjectBackup | { canceled: true } | { error: string }>;
   };
   /** the Explain help in a window of its own (2026-10-15); absent → the dialog inside the page */
   explainWin?: { show(title: string, html: string): Promise<{ ok: boolean }>; hide(): Promise<{ ok: boolean }> };
@@ -131,6 +134,8 @@ interface Window {
     saveWeather(stem: string, epwText: string, ddyFrom: string | null): Promise<{ epw: string; ddy: boolean } | { error: string }>;
     run(opts: { stamp: string; idf: string; epw: string | null; expand: boolean; exe?: string }): Promise<{ exitCode: number | null; seconds: number; dir: string | null; error: string | null }>;
     readRunFile(stamp: string, name: string): Promise<Uint8Array | null>;
+    /** the run record (2026-11-20): the run's files and summary.json into <project>/record/<stamp>/ */
+    writeRecord(stamp: string, files: readonly string[], summary: unknown): Promise<{ dir: string; files: string[]; missing: string[]; bytes: number } | { skipped: string } | { error: string }>;
     /** the run's eplustbl.htm printed through the system dialog, or saved as a PDF where the user picks (2026-10-08) */
     reportOut(stamp: string, mode: "print" | "pdf", title?: string): Promise<{ saved?: string; printed?: boolean; canceled?: boolean; error?: string; why?: string }>;
     validate(idf: string): Promise<{ ok: boolean; err: string }>;

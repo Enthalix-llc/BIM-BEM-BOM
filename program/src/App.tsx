@@ -4631,6 +4631,15 @@ export function App(): React.ReactElement {
   };
   const [newProject, setNewProject] = useState<{ ifc: string | null; siblings: string[] } | null>(null);
   const [recentProjects, setRecentProjects] = useState<Array<{ dir: string; name: string }>>([]);
+  /** BACK UP PROJECT (2026-11-20): the last backup the project's store remembers, and the command */
+  const [lastBackup, setLastBackup] = useState<ProjectBackup | null>(() => window.projectNow?.lastBackup ?? null);
+  const backUpProject = async (): Promise<void> => {
+    setStatus("backing up the project — the rulings, the IFCs, weather, tables, library, imports and run records…");
+    const r = await window.projectFolder.backup();
+    if ("error" in r) setStatus(`backup failed: ${r.error}`);
+    else if ("canceled" in r) setStatus("backup cancelled");
+    else { setLastBackup(r); setStatus(`backed up to ${r.dir} — ${(r.bytes / 1e9).toFixed(2)} GB (${r.parts.join(", ")}); data/ and cache/ are rebuilt, not copied`); }
+  };
   const [examples, setExamples] = useState<Array<{ name: string; ifcs: string[] }>>([]);
   useEffect(() => { if (openMenu) { void window.projectFolder.recent().then(setRecentProjects); void window.projectFolder.examples().then(setExamples); } }, [openMenu]);
   /** CLOSE IFC… · ALL (user, 2026-10-23, asked first): the house and the files beside it leave the window, which starts empty — the
@@ -4880,6 +4889,7 @@ export function App(): React.ReactElement {
             {window.projectNow && <>
               <div className="ctxHead">this project</div>
               <button onClick={() => { setOpenMenu(null); void window.projectFolder.reveal(); }} title={window.projectNow.dir}>Show the project folder</button>
+              <button onClick={() => { setOpenMenu(null); void backUpProject(); }} title={`a dated copy of what cannot be rebuilt — project.sqlite (the rulings and their history), the IFCs, weather, tables, library, imports and the run records — into a folder you pick; data/ and cache/ are rebuilt, not copied. ${lastBackup ? `Last backup ${new Date(lastBackup.at).toLocaleString()} → ${lastBackup.dir}` : "Never backed up."}`}>Back up project…{lastBackup ? "" : " (never)"}</button>
               <button onClick={() => { setOpenMenu(null); const n = window.prompt("Name the template — its data sources, tables, library and cache (never the IFCs, rulings or results):", `${window.projectNow?.name ?? "my"} template`); if (n) void window.projectFolder.saveTemplate(n, window.confirm("Make it the default for new projects?")).then((t) => setStatus(`template saved: ${t}`), (e: unknown) => setStatus(e instanceof Error ? e.message : String(e))); }} title="a template of your own from this project, for new projects">Save as template…</button>
               <button onClick={() => { setOpenMenu(null); if (window.confirm(`Close the project ${window.projectNow?.name}? Its rulings are on disk.`)) void switchProject(null); }}>Close project</button>
             </>}

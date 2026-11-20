@@ -11,6 +11,7 @@
 | `library/` | your own materials, windows, schedules, holiday lists and seasons |
 | `cache/` | what it read from the web (station listings, catalogues) |
 | `imports/` | the bills it imported |
+| `record/` | one folder per energy run: the IDF the engine ran (`in.idf`), its tables (`eplustbl.csv`), its messages (`eplusout.err`) and `summary.json` (what it was built from, the end uses by fuel, peaks, unmet hours). About 2 MB a run, kept when `data/` is rebuilt |
 | `data/` | the derived databases and the runs, rebuilt from the rest when missing |
 
 **The projects folder** (chosen in the New project dialog, remembered in the settings) holds one folder per project,
@@ -23,6 +24,7 @@ Projects/                    e.g. ~/Documents/BIM-BEM-BOM Projects
     ├── project.sqlite       versions and lineage, every ruling with its history, the data-sources record
     ├── ifc/                 its IFC files (building, site, services), copied in
     ├── weather/  tables/  library/  cache/  imports/
+    ├── record/              one folder per energy run — the IDF, its tables and messages, summary.json
     └── data/                ifc.db · idf.db · bem.db · bom.db · cfd.db and the runs — derived, rebuilt if missing
 ```
 
@@ -31,6 +33,14 @@ data-sources record), `tables/`, `library/`, `cache/`. **New project…** copies
 copies in the IFC files you pick. `standard/` here is the template the program ships with. It is clean, and holds
 nothing of any project. **Save as template…** (in the Open menu) writes one of your own from the open project, such as
 one carrying your licensed tables or your own materials. You can make it the default for new projects.
+
+## Backing up a project
+
+**Back up project…** (in the Open menu, under *this project*) copies what cannot be rebuilt into a dated folder you
+pick: `project.sqlite`, `ifc/`, `weather/`, `tables/`, `library/`, `imports/` and `record/`. It leaves out `data/`
+(rebuilt from the IFCs and the rulings when the project opens) and `cache/` (read from the web again), and the `.bak`
+copies a write leaves beside an IFC. The menu's hint says when the project was last backed up and where. No git or
+online account is needed; if you use git, keep `data/` and `cache/` out of it.
 
 ## The data-sources record
 

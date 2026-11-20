@@ -587,7 +587,8 @@ function projectInfo() {
   if (!PROJECT_DIR || !projects) return null;
   let sources = null; try { sources = JSON.parse(projects.getMeta("sources") ?? "null"); } catch { sources = null; }
   const open = projects.getMeta("open_ifc");
-  return { dir: PROJECT_DIR, name: projects.getMeta("name") ?? path.basename(PROJECT_DIR), template: projects.getMeta("template"), sources, openIfc: open ? path.join(PROJECT_DIR, open) : null };
+  let lastBackup = null; try { lastBackup = JSON.parse(projects.getMeta("last_backup") ?? "null"); } catch { lastBackup = null; }
+  return { dir: PROJECT_DIR, name: projects.getMeta("name") ?? path.basename(PROJECT_DIR), template: projects.getMeta("template"), sources, openIfc: open ? path.join(PROJECT_DIR, open) : null, lastBackup };
 }
 /** WORK FROM BEFORE PROJECT FOLDERS (0.3.0 and earlier kept every ruling in the app's own projects.sqlite, the libraries, bill imports
  *  and weather in its own folder): an IFC copied into a new project brings its IfcProject's versions, ledgers and history from that
@@ -720,6 +721,64 @@ ipcMain.handle("project:example", async (_e, name) => {
 });
 ipcMain.handle("project:examples", async () => { try { return fs.readdirSync(EXAMPLES_DIR).filter((d) => fs.statSync(path.join(EXAMPLES_DIR, d)).isDirectory()).map((d) => ({ name: d, ifcs: fs.readdirSync(path.join(EXAMPLES_DIR, d)).filter((f) => /\.ifc$/i.test(f)).map((f) => path.join(EXAMPLES_DIR, d, f)) })); } catch { return []; } });
 ipcMain.handle("project:reveal", async () => { if (PROJECT_DIR) shell.showItemInFolder(path.join(PROJECT_DIR, "project.sqlite")); return !!PROJECT_DIR; });
+/** THE RUN RECORD (2026-11-20, the plan of 2026-11-17): the run folder's in.idf, eplustbl.csv and eplusout.err copied into the PROJECT's
+ *  record/<stamp>/ with the summary the renderer made (modules/bem/core/runRecord.ts) — data/ is derived and rebuilt, the record is kept
+ *  and goes into every backup. No project open (the bare program) → nothing written, said. */
+ipcMain.handle("bem:write-record", async (_ev, stamp, files, summary) => {
+  try {
+    if (!PROJECT_DIR) return { skipped: "no project open — runs are recorded in a project's folder" };
+    const s = path.basename(String(stamp));
+    const out = path.join(PROJECT_DIR, "record", s);
+    fs.mkdirSync(out, { recursive: true });
+    let bytes = 0; const kept = [], missing = [];
+    for (const f of files) {
+      const src = path.join(runDir(s), path.basename(String(f)));
+      if (!fs.existsSync(src)) { missing.push(f); continue; }
+      fs.copyFileSync(src, path.join(out, path.basename(String(f))));
+      bytes += fs.statSync(src).size; kept.push(f);
+    }
+    const json = JSON.stringify(summary, null, 2) + "\n";
+    fs.writeFileSync(path.join(out, "summary.json"), json);
+    bytes += Buffer.byteLength(json);
+    return { dir: out, files: [...kept, "summary.json"], missing, bytes };
+  } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+});
+/** BACK UP PROJECT (2026-11-20, the plan of 2026-11-17): what cannot be rebuilt — project.sqlite (the rulings, versions and their
+ *  history), ifc/, weather/, tables/, library/, imports/ and record/ — copied into a dated folder where the user picks; data/ (derived,
+ *  rebuilt from the IFC and the rulings), cache/ (refetched) and the .bak copies a file write leaves beside an IFC are left out. No git asked of anyone. The project's store remembers the
+ *  last backup. The store is written whole on every change (a temp file renamed over it), so the copy is the state in force. */
+const BACKUP_PARTS = ["project.sqlite", "ifc", "weather", "tables", "library", "imports", "record"];
+const sizeOf = (p) => { const st = fs.statSync(p); return st.isDirectory() ? fs.readdirSync(p).reduce((n, f) => n + sizeOf(path.join(p, f)), 0) : st.size; };
+ipcMain.handle("project:backup", async () => {
+  try {
+    if (!PROJECT_DIR || !projects) return { error: "open a project first" };
+    const name = projects.getMeta("name") ?? path.basename(PROJECT_DIR);
+    let last = null; try { last = JSON.parse(projects.getMeta("last_backup") ?? "null"); } catch { last = null; }
+    // ENTHALIX_BACKUP_TO names the folder in place of the dialog — for a test window only, as BIM_DEV_URL is
+    const r = process.env.ENTHALIX_BACKUP_TO ? { canceled: false, filePaths: [process.env.ENTHALIX_BACKUP_TO] }
+      : await dialog.showOpenDialog({ title: `Back up ${name} — choose the folder the backup goes into`, buttonLabel: "Back up here",
+        defaultPath: last?.parent ?? app.getPath("documents"), properties: ["openDirectory", "createDirectory"] });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const parent = path.resolve(r.filePaths[0]);
+    if (inside(PROJECT_DIR, parent)) return { error: "a backup cannot go inside the project's own folder" };
+    const d = new Date(), pad = (n) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+    let dest = path.join(parent, `${name} backup ${stamp}`);
+    for (let i = 2; fs.existsSync(dest); i++) dest = path.join(parent, `${name} backup ${stamp} (${i})`);
+    fs.mkdirSync(dest, { recursive: true });
+    const parts = [];
+    for (const part of BACKUP_PARTS) {
+      const src = path.join(PROJECT_DIR, part);
+      if (!fs.existsSync(src)) continue;
+      fs.cpSync(src, path.join(dest, part), { recursive: true, preserveTimestamps: true, filter: (f) => !/\.bak$/i.test(f) });
+      parts.push(part);
+    }
+    const bytes = sizeOf(dest);
+    const rec = { dir: dest, parent, at: d.toISOString(), bytes, parts };
+    projects.setMeta("last_backup", JSON.stringify(rec));
+    return rec;
+  } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+});
 
 explainWindow.register(app, () => mainWin);
 app.whenReady().then(async () => {

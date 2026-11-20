@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("projectFolder", {
   examples: () => ipcRenderer.invoke("project:examples"),
   example: (name) => ipcRenderer.invoke("project:example", name),
   reveal: () => ipcRenderer.invoke("project:reveal"),
+  backup: () => ipcRenderer.invoke("project:backup"),
 });
 contextBridge.exposeInMainWorld("bim", {
   openIfc: () => ipcRenderer.invoke("bim:open-ifc"),
@@ -56,6 +57,7 @@ contextBridge.exposeInMainWorld("bem", {
   saveWeather: (stem, epwText, ddyFrom) => ipcRenderer.invoke("bem:save-weather", stem, epwText, ddyFrom),
   run: (opts) => ipcRenderer.invoke("bem:run", opts),
   readRunFile: (stamp, name) => ipcRenderer.invoke("bem:read-run-file", stamp, name),
+  writeRecord: (stamp, files, summary) => ipcRenderer.invoke("bem:write-record", stamp, files, summary),
   reportOut: (stamp, mode, title) => ipcRenderer.invoke("bem:report-out", stamp, mode, title),
   validate: (idf) => ipcRenderer.invoke("bem:validate", idf),
   onProgress: (cb) => {
