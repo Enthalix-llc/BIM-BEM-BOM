@@ -53,7 +53,8 @@ export interface IfcPane {
    *  it is named for — the PROJECT GRID's compass, −Z north as everywhere here —
    *  and looks at that face; `iso` the south-east corner from above; `fit` frames
    *  the box from where the camera stands. One camera serves every pane. */
-  view(preset: ViewPreset, min: [number, number, number], max: [number, number, number]): void;
+  /** north: true north as a horizontal unit vector in the house frame (sun.northDirection); the project grid's −Z when absent */
+  view(preset: ViewPreset, min: [number, number, number], max: [number, number, number], north?: [number, number, number]): void;
   /** zoom by a fraction of the distance to the target: +0.25 in, −0.25 out (the wheel does the same) */
   zoom(step: number): void;
   /** what a LEFT drag does — orbit, or pan (scroll the plan); a right drag always pans */
@@ -72,7 +73,7 @@ export interface IfcPane {
   dispose(): void;
 }
 
-export type ViewPreset = "plan" | "S" | "N" | "E" | "W" | "iso" | "fit";
+export type ViewPreset = "plan" | "trueN" | "iso" | "fit";
 export type DragMode = "orbit" | "pan";
 
 export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
@@ -301,7 +302,7 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
       const r = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
       void world.camera.controls.setLookAt(cx + r, cy + r * 0.7, cz + r, cx, cy, cz, false);
     },
-    view(preset, min, max) {
+    view(preset, min, max, north = [0, 0, -1]) {
       const c = world.camera.controls;
       const cx = (min[0] + max[0]) / 2, cy = (min[1] + max[1]) / 2, cz = (min[2] + max[2]) / 2;
       const sx = max[0] - min[0], sy = max[1] - min[1], sz = max[2] - min[2];
@@ -311,13 +312,16 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
         void c.fitToSphere(new THREE.Sphere(new THREE.Vector3(cx, cy, cz), Math.hypot(sx, sy, sz) / 2), true);
         return;
       }
-      if (preset === "iso") { const r = Math.max(sx, sy, sz); void c.setLookAt(cx + r, cy + r * 0.7, cz + r, cx, cy, cz, true); return; }
-      // the plan: a hair off the vertical, so camera-controls keeps an up vector
-      if (preset === "plan") { const r = Math.max(sx, sz); void c.setLookAt(cx, cy + r * 1.6, cz + 0.001, cx, cy, cz, true); return; }
-      // an elevation: the camera stands on the named side, far enough for that face to fit
-      const d = 1.6 * Math.max(sy, preset === "S" || preset === "N" ? sx : sz);
-      const [px, pz] = preset === "S" ? [cx, cz + d] : preset === "N" ? [cx, cz - d] : preset === "E" ? [cx + d, cz] : [cx - d, cz];
-      void c.setLookAt(px, cy, pz, cx, cy, cz, true);
+      // true north (nx, nz) and true east (−nz, nx) in plan — the sun ring's own north (the user, 2026-11-20: the iso and
+      // the true-north plan read against true north, which makes solar studies clearer)
+      const nx = north[0], nz = north[2], ex = -nz, ez = nx;
+      // the isometric from the TRUE south-east, above
+      if (preset === "iso") { const r = Math.max(sx, sy, sz); void c.setLookAt(cx + r * (ex - nx), cy + r * 0.7, cz + r * (ez - nz), cx, cy, cz, true); return; }
+      // a plan: a hair off the vertical, on the south side, so camera-controls keeps an up vector — the project grid's
+      // north up ("plan", the layout reference) or true north up ("trueN")
+      const r = Math.max(sx, sz);
+      const [ux, uz] = preset === "trueN" ? [nx, nz] : [0, -1];
+      void c.setLookAt(cx - ux * 0.001, cy + r * 1.6, cz - uz * 0.001, cx, cy, cz, true);
     },
     getView() {
       const c = world.camera.controls;

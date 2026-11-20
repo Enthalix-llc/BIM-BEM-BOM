@@ -202,7 +202,7 @@ export function App(): React.ReactElement {
   const dragRef = useRef(drag); dragRef.current = drag;
   useEffect(() => { window.localStorage.setItem("bim-drag", drag); ifcPaneRef.current?.setDrag(drag); }, [drag]);
   /** the standard views drive the one camera; the model's box is the file's */
-  const viewTo = useCallback((v: ViewPreset) => { const run = runRef.current; if (run) ifcPaneRef.current?.view(v, run.bbox.min, run.bbox.max); }, []);
+  const viewTo = useCallback((v: ViewPreset) => { const run = runRef.current; if (run) ifcPaneRef.current?.view(v, run.bbox.min, run.bbox.max, northDirection(northAxisFromTrueNorth(run.trueNorth ?? null))); }, []);
   const dbRef = useRef<import("sql.js").Database | null>(null);
 
   const [status, setStatus] = useState("open an IFC to begin");
