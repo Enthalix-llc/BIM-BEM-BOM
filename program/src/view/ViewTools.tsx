@@ -3,7 +3,7 @@
 //
 // THE VIEW TOOLS (user, 2026-09-08: "scroll, rotate, typical view tools for
 // plan views"): the standard views of a model — the plan (the project grid's
-// north up), the plan with TRUE north up, the isometric from the true south-east
+// north up), the plan with TRUE north up, the isometric from true south (north up)
 // (2026-11-20: the four grid elevations removed), fit — a zoom step each way,
 // and what the left drag does (orbit, or pan to scroll a plan; the right drag
 // always pans, the wheel always zooms). They sit in the tab strip BESIDE the
@@ -15,7 +15,7 @@ import type { DragMode, ViewPreset } from "./ifcPane.js";
 const PRESETS: ReadonlyArray<readonly [ViewPreset, string]> = [
   ["plan", "look straight down — the plan, the project grid's north up (the layout reference)"],
   ["trueN", "look straight down — the plan turned so TRUE north is up (the file's TrueNorth, as the sun uses it)"],
-  ["iso", "from the true south-east, above — the isometric, read against true north"],
+  ["iso", "from true south, above — the true-north plan tilted, true north up the screen (clearer solar studies)"],
   ["fit", "frame the whole model from where the camera stands"],
 ];
 

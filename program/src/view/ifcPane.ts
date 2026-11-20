@@ -312,11 +312,12 @@ export async function createIfcPane(container: HTMLElement): Promise<IfcPane> {
         void c.fitToSphere(new THREE.Sphere(new THREE.Vector3(cx, cy, cz), Math.hypot(sx, sy, sz) / 2), true);
         return;
       }
-      // true north (nx, nz) and true east (−nz, nx) in plan — the sun ring's own north (the user, 2026-11-20: the iso and
+      // true north (nx, nz) in plan — the sun ring's own north (the user, 2026-11-20: the iso and
       // the true-north plan read against true north, which makes solar studies clearer)
-      const nx = north[0], nz = north[2], ex = -nz, ez = nx;
-      // the isometric from the TRUE south-east, above
-      if (preset === "iso") { const r = Math.max(sx, sy, sz); void c.setLookAt(cx + r * (ex - nx), cy + r * 0.7, cz + r * (ez - nz), cx, cy, cz, true); return; }
+      const nx = north[0], nz = north[2];
+      // the isometric from TRUE south, above — true north up the screen as in the true-north plan, only tilted (the user,
+      // 2026-11-20: from the south-east corner the house swung away from the true-north heading)
+      if (preset === "iso") { const r = Math.max(sx, sy, sz); void c.setLookAt(cx - nx * r * Math.SQRT2, cy + r * 0.7, cz - nz * r * Math.SQRT2, cx, cy, cz, true); return; }
       // a plan: a hair off the vertical, on the south side, so camera-controls keeps an up vector — the project grid's
       // north up ("plan", the layout reference) or true north up ("trueN")
       const r = Math.max(sx, sz);
