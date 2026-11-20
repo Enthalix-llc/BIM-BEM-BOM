@@ -85,6 +85,11 @@ and will be published once it runs on the public sample building.
 
 The app itself has no AI in it. A separate package, `mcp/`, offers the
 program's tools to an AI assistant as an MCP server. It reads a project folder
-through the same core code the app runs and never writes it. Changes stay
-yours: the assistant can read and explain, and you make every ruling in the
-app. See [`mcp/README.md`](mcp/README.md).
+through the same core code the app runs and never changes it. Changes stay
+yours: the assistant can read, explain, preview and run what-if years, and it
+can leave a **proposal** as a file in the project's `inbox/`. The app reads the
+inbox with plain code (`modules/bem/core/proposals.ts`, the one format both
+sides use) and shows each proposal at the head of the editing column with its
+reason and what it was measured against. **Stage** puts it in its tab's stage,
+as if you had made the change; that tab's own Apply writes it. **Reject** moves
+the file to `inbox/rejected/`. See [`mcp/README.md`](mcp/README.md).

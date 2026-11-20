@@ -14,7 +14,7 @@ import { withReportUnits, parseIdfObjects, zoneEquipmentZones } from "../../prog
 import { readRunSql, type RunResults } from "../../program/src/modules/bem/core/eplusSql.js";
 import { parseErr } from "../../program/src/modules/bem/core/eplusErr.js";
 import { openBemDb, writeRun, queryRuns, type BemRun } from "../../program/src/modules/bem/core/bemDb.js";
-import { Refusal, sql, dataDb, type ReadFrom } from "./project.js";
+import { Refusal, sql, dataDb, needDb, type ReadFrom } from "./project.js";
 import { engines } from "./environment.js";
 import { preview, type Change } from "./preview.js";
 import { results, runSummary } from "./tools.js";
@@ -22,7 +22,7 @@ import { results, runSummary } from "./tools.js";
 /** scenario runs kept in cache/mcp/runs; an older one is removed when a new one is made */
 export const KEEP_RUNS = 5;
 const KILL_MS = 15 * 60 * 1000;   // the app's own limit on a run
-const SCENARIO_DIR = path.join("cache", "mcp", "runs");
+export const SCENARIO_DIR = path.join("cache", "mcp", "runs");
 
 const r1 = (x: number): number => Math.round(x * 10) / 10;
 
@@ -122,6 +122,15 @@ export async function runScenario(dir: string, change: Change | null, onLine: (l
       const d = r1((eb[fuel]?.[row] ?? 0) - (ea[fuel]?.[row] ?? 0));
       if (d !== 0) (endUseDelta[fuel] ??= {})[row] = d;
     }
+  // the scenario's summary beside its files: what propose_ruling reads to carry this year in a proposal (the change must be the same)
+  const against = before === null ? "the project has no run yet — run it in the app (RUN) to compare against"
+    : `the project's last run ${last!.stamp}: ${sameModel === null ? "its in.idf is not on disk, so whether it is the same model is not known" : sameModel ? "the same model, byte for byte" : "a DIFFERENT model (the project changed since that run, besides this change)"}; ${sameWeather === null ? "its weather not recorded" : sameWeather ? "the same weather" : `other weather (${path.basename(last!.epw ?? "")})`}`;
+  const facOf = (x: Record<string, unknown> | null, k: string): number | null => { const f = x?.facility as Record<string, unknown> | null | undefined; return typeof f?.[k] === "number" ? (f[k] as number) : null; };
+  fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify({
+    change, idfContentSha256: (await needDb(dir, "idf")).from.contentSha256, completed: err.completed, fatal: err.fatal, severe: err.severe,
+    heatingKwh: facOf(scenario, "heatingKwh"), coolingKwh: facOf(scenario, "coolingKwh"), lastRun: last?.stamp ?? null,
+    heatingKwhLast: facOf(before, "heatingKwh"), coolingKwhLast: facOf(before, "coolingKwh"), against,
+  }, null, 1));
   const removed = prune(root);
 
   return {
@@ -134,12 +143,12 @@ export async function runScenario(dir: string, change: Change | null, onLine: (l
       model: { noEffect: pv.result.noEffect ?? null, objects: pv.result.objects, settingsChanged: pv.result.settingsChanged, notHonoured: pv.result.notHonoured, storeProof: pv.result.storeProof },
       scenario,
       lastRun: before,
-      against: before === null ? "the project has no run yet — run it in the app (RUN) to compare against"
-        : `the project's last run ${last!.stamp}: ${sameModel === null ? "its in.idf is not on disk, so whether it is the same model is not known" : sameModel ? "the same model, byte for byte" : "a DIFFERENT model (the project changed since that run, besides this change)"}; ${sameWeather === null ? "its weather not recorded" : sameWeather ? "the same weather" : `other weather (${path.basename(last!.epw ?? "")})`}`,
+      against,
       facilityDelta, endUseDeltaKwh: endUseDelta,
       ...(pv.result.alsoCarried ? { alsoCarried: pv.result.alsoCarried } : {}),
+      stamp,
       kept: `${path.relative(dir, runDir)} — this package's own folder; the newest ${KEEP_RUNS} are kept${removed.length ? `, ${removed.length} older removed` : ""}`,
-      note: "a what-if year run beside the project, nothing of the project changed. Apply the ruling in the app to make it the model.",
+      note: "a what-if year run beside the project, nothing of the project changed. propose_ruling with this stamp carries this year in a proposal; only the user applies a ruling, in the app.",
     },
   };
 }

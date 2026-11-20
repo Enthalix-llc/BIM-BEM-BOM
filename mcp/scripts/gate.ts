@@ -20,6 +20,7 @@ import { parseTabularCsv } from "../../program/src/modules/bem/core/eplusTables.
 import { preview } from "../src/preview.js";
 import { engines } from "../src/environment.js";
 import { KEEP_RUNS } from "../src/scenario.js";
+import { readProposal, stagedWith } from "../../program/src/modules/bem/core/proposals.js";
 
 const src = process.argv[2];
 if (!src || !fs.existsSync(path.join(src, "project.sqlite"))) { console.error("usage: pnpm gate <project folder holding project.sqlite>"); process.exit(2); }
@@ -158,6 +159,9 @@ if (lrr && lrr.rows.length >= 2) {
   say(!!d && Object.values(d).every((v) => v === 0), "compare_runs of a run with itself: every difference 0");
 }
 
+const scenarioStamps: string[] = [];
+let winForProposal: string | null = null;
+let s1Result: unknown = null;
 // PREVIEW (release 2): no change reproduces the model as it stands to the byte (the package builds as the app builds); a real change
 // is seen, proven by the store as the app's Apply proves it, and the project untouched (part 4)
 if (engines.findEngine()) {
@@ -199,13 +203,41 @@ if (engines.findEngine()) {
     if (win) {
       const s1 = (await call(`run_scenario (the window type "${win}" at U 1.234, SHGC 0.22)`, () => tools.run_scenario({ project: name, change: { section: "constructions", key: win, value: { source: "u", uWm2k: 1.234, shgc: 0.22, vt: 0.44 } } })))?.result as Sc | undefined;
       const f1 = s1?.scenario.facility;
+      s1Result = s1; winForProposal = win;
       say(!!s1 && s1.engine.completed && s1.engine.fatal === 0 && !!f1 && !!f0 && (f1.heatingKwh !== f0.heatingKwh || f1.coolingKwh !== f0.coolingKwh),
         `SCENARIO (the window change): Fatal ${s1?.engine.fatal} · Severe ${s1?.engine.severe}, heating ${f0?.heatingKwh} → ${f1?.heatingKwh}, cooling ${f0?.coolingKwh} → ${f1?.coolingKwh} kWh; against the last run ${JSON.stringify(s1?.facilityDelta ?? null).slice(0, 80)}`);
     }
+    scenarioStamps.push(...[s0, s1Result].map((x) => (x as { stamp?: string } | undefined)?.stamp).filter((x): x is string => !!x));
     const kept = fs.existsSync(path.join(dir, "cache", "mcp", "runs")) ? fs.readdirSync(path.join(dir, "cache", "mcp", "runs")).length : 0;
     say(kept >= 1 && kept <= KEEP_RUNS, `SCENARIO runs kept in cache/mcp/runs: ${kept} (at most ${KEEP_RUNS})`);
   } else console.log("  · SCENARIO skipped (GATE_NO_RUN)");
 } else console.log("  · PREVIEW skipped — no EnergyPlus installed (the engine's datasets are what a ruling resolves against)");
+
+// PROPOSE (release 4): the change left in inbox/ in the program's own format — read back by the app's reader, the scenario carried when
+// its stamp is named, the stage the app would make equal to the ruling proposed; the waiting list reads it
+if (engines.findEngine()) {
+  const win = winForProposal ?? (idf.exec("SELECT DISTINCT t.name FROM element_types t JOIN elements e ON e.type_id = t.id WHERE t.ifc_class LIKE '%WINDOW%' AND t.name IS NOT NULL ORDER BY t.name")[0]?.values[0]?.[0] as string | undefined) ?? "";
+  const change = { section: "constructions" as const, key: win, value: { source: "u", uWm2k: 1.234, shgc: 0.22, vt: 0.44 } };
+  const withRun = scenarioStamps[1];
+  const pr = await call(`propose_ruling (the window type "${win}"${withRun ? `, scenario ${withRun}` : ""})`, () => tools.propose_ruling({ project: name, change, reason: "gate: a better window, measured", ...(withRun ? { scenario: withRun } : {}) }));
+  const pid = (pr?.result as { proposal?: string } | undefined)?.proposal;
+  const file = pid ? path.join(dir, "inbox", `${pid}.json`) : "";
+  const back = file && fs.existsSync(file) ? readProposal(pid!, fs.readFileSync(file, "utf8")) : null;
+  say(!!back?.ok, `PROPOSE: inbox/${pid}.json written and read back by the app's own reader${back && !back.ok ? ` — ${back.problem}` : ""}`);
+  if (back?.ok) {
+    const led = ((await tools.rulings({ project: name, kind: "bem", key: "constructions" })).result as { value: Record<string, unknown> }).value ?? {};
+    const staged = stagedWith(led, back.proposal.change) as Record<string, unknown>;
+    say(JSON.stringify(staged[win]) === JSON.stringify(change.value) && Object.keys(staged).length >= Object.keys(led).length, `PROPOSE: the stage the app makes from it holds the ruling proposed, and every ruling the tab held besides (${Object.keys(staged).length} types)`);
+    say(!withRun || (back.proposal.scenario?.stamp === withRun && typeof back.proposal.scenario.heatingKwh === "number"), withRun ? `PROPOSE carries the scenario ${withRun}: heating ${back.proposal.scenario?.heatingKwh} · cooling ${back.proposal.scenario?.coolingKwh} kWh beside the last run's ${back.proposal.scenario?.heatingKwhLast} · ${back.proposal.scenario?.coolingKwhLast}` : "PROPOSE without a scenario (GATE_NO_RUN)");
+    say(!!back.proposal.made.idfContentSha256 && back.proposal.made.ifcSha256 !== null, `PROPOSE names what it was measured against: idf.db ${back.proposal.made.idfContentSha256?.slice(0, 12)}…, the IFC ${back.proposal.made.ifcSha256?.slice(0, 12)}…`);
+  }
+  const lp = (await tools.proposals({ project: name })).result as { waiting: Array<{ id: string }>; staged: unknown[]; rejected: unknown[] };
+  say(lp.waiting.length === 1 && lp.waiting[0]!.id === pid && lp.staged.length === 0 && lp.rejected.length === 0, `proposals: ${lp.waiting.length} waiting (${pid}), ${lp.staged.length} staged, ${lp.rejected.length} rejected`);
+  await refused("a proposal for a section no tab stages", () => tools.propose_ruling({ project: name, change: { section: "zones" as never, key: "ADU", value: { conditioned: true } }, reason: "x" }), /not a section a tab stages/);
+  await refused("a proposal with no reason", () => tools.propose_ruling({ project: name, change, reason: "  " }), /give the reason/);
+  if (scenarioStamps[0]) await refused("a proposal naming a scenario run with another change", () => tools.propose_ruling({ project: name, change, reason: "x", scenario: scenarioStamps[0] }), /run with another change/);
+  await refused("a proposal naming a scenario that does not exist", () => tools.propose_ruling({ project: name, change, reason: "x", scenario: "19000101T000000" }), /no scenario/);
+}
 
 // 3 · the refusals
 await refused("a path outside the projects folder", () => tools.census({ project: "../.." }), /outside the projects folder|no project/);
@@ -241,8 +273,8 @@ await refused("a run that does not exist", () => tools.run_results({ project: na
   await client.connect(new StdioClientTransport({ command: tsx, args: [path.resolve(HERE, "..", "src", "server.ts"), scratch], stderr: "pipe" }));
   const listed = (await client.listTools()).tools;
   const names = listed.map((t) => t.name).sort();
-  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "preview_ruling", "project_summary", "rulings", "run_results", "run_scenario", "void_qa", "wall_qa", "zones"];
-  say(JSON.stringify(names) === JSON.stringify(want) && listed.every((t) => (t.annotations?.readOnlyHint === true) === (t.name !== "run_scenario")), `SERVER over stdio: ${names.length} tools listed, every one marked read-only but run_scenario (it writes its own run folder)`);
+  const want = ["bom_results", "census", "compare_runs", "constructions", "explain", "list_projects", "list_runs", "model_checks", "preview_ruling", "project_summary", "proposals", "propose_ruling", "rulings", "run_results", "run_scenario", "void_qa", "wall_qa", "zones"];
+  say(JSON.stringify(names) === JSON.stringify(want) && listed.every((t) => (t.annotations?.readOnlyHint === true) === !["run_scenario", "propose_ruling"].includes(t.name)), `SERVER over stdio: ${names.length} tools listed, every one marked read-only but run_scenario (its own run folder) and propose_ruling (a file in inbox/)`);
   const r = await client.callTool({ name: "run_results", arguments: { project: name } }) as { content: Array<{ text: string }>; isError?: boolean };
   const heat = (JSON.parse(r.content[0]!.text) as { result: { facility: { heatingKwh: number } } }).result.facility.heatingKwh;
   say(!r.isError && heat === rres?.facility?.heatingKwh, `SERVER run_results over stdio: heating ${heat} kWh, the same as the direct call`);
@@ -254,11 +286,11 @@ await refused("a run that does not exist", () => tools.run_results({ project: na
 // 4 · nothing written
 const after = hashTree(dir);
 const changed = [...before].filter(([f, h]) => after.get(f) !== h).map(([f]) => f);
-const ownRuns = path.join("cache", "mcp", "runs") + path.sep;
+const ownRuns = path.join("cache", "mcp", "runs") + path.sep, ownInbox = "inbox" + path.sep;
 const added = [...after.keys()].filter((f) => !before.has(f));
-const addedElsewhere = added.filter((f) => !f.startsWith(ownRuns));
+const addedElsewhere = added.filter((f) => !f.startsWith(ownRuns) && !(f.startsWith(ownInbox) && !f.slice(ownInbox.length).includes(path.sep)));
 const gone = [...before.keys()].filter((f) => !after.has(f));
-say(changed.length === 0 && addedElsewhere.length === 0 && gone.length === 0, `THE PROJECT'S FILES BYTE-IDENTICAL after every call: ${before.size} files, changed ${changed.length}, removed ${gone.length}, added ${addedElsewhere.length} outside the scenarios' own folder${changed.length ? ` (${changed.slice(0, 5).join(", ")})` : ""}${addedElsewhere.length ? ` (${addedElsewhere.slice(0, 5).join(", ")})` : ""} · ${added.length - addedElsewhere.length} files in ${ownRuns}`);
+say(changed.length === 0 && addedElsewhere.length === 0 && gone.length === 0, `THE PROJECT'S FILES BYTE-IDENTICAL after every call: ${before.size} files, changed ${changed.length}, removed ${gone.length}, added ${addedElsewhere.length} outside the scenarios' folder and the inbox${changed.length ? ` (${changed.slice(0, 5).join(", ")})` : ""}${addedElsewhere.length ? ` (${addedElsewhere.slice(0, 5).join(", ")})` : ""} · ${added.filter((f) => f.startsWith(ownRuns)).length} files in ${ownRuns}, ${added.filter((f) => f.startsWith(ownInbox)).length} in ${ownInbox}`);
 
 fs.rmSync(scratch, { recursive: true, force: true });
 console.log(ok ? "gate:mcp ✓" : "gate:mcp ✗");

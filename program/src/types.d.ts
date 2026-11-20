@@ -57,6 +57,11 @@ interface ProjectBackup { dir: string; parent: string; at: string; bytes: number
 interface ProjectNow { dir: string; name: string; template: string | null; sources: unknown; openIfc: string | null; lastBackup?: ProjectBackup | null }
 interface SaveStatus { kind: "save" | "backup"; ok: boolean; what?: string; error?: string; committed?: boolean; pushed?: boolean; at: string }
 interface Window {
+  /** THE INBOX (2026-11-20): an assistant's proposals in the project's inbox/ — listed, and moved to staged/ or rejected/ by the user */
+  inbox: {
+    list(): Promise<Array<{ id: string; text: string }>>;
+    move(id: string, to: "staged" | "rejected"): Promise<string>;
+  };
   /** THE PROJECT IN FORCE (2026-11-12, a project is a folder): read at the page's start; null when none is open */
   projectNow: ProjectNow | null;
   projectFolder: {

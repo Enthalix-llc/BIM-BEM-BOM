@@ -22,6 +22,7 @@ import { queryBills, queryCalibration } from "../../program/src/modules/bom/core
 import { parseExplain } from "../../program/src/explain/explainParse.js";
 import { preview, type Change } from "./preview.js";
 import { runScenario } from "./scenario.js";
+import { propose, listProposals } from "./propose.js";
 
 export interface Reply { result: unknown; read: ReadFrom[] }
 const LEDGER_KINDS = ["corrections", "bem", "bom"] as const;
@@ -247,6 +248,20 @@ export class Tools {
     const dir = this.projects.folder(a.project);
     const r = await runScenario(dir, a.change ?? null, onLine);
     return { result: r.result, read: r.read };
+  }
+
+  /** the change left as a proposal in the project's inbox/ for the user to stage or reject in the app — nothing applied */
+  async propose_ruling(a: { project: string; change: Change; reason: string; scenario?: string }): Promise<Reply> {
+    const dir = this.projects.folder(a.project);
+    const r = await propose(dir, a.change, a.reason, a.scenario);
+    return { result: r.result, read: r.read };
+  }
+
+  /** the proposals in the inbox: waiting, staged by the user, rejected by the user */
+  async proposals(a: { project: string }): Promise<Reply> {
+    const dir = this.projects.folder(a.project);
+    const inbox = path.join(dir, "inbox");
+    return { result: listProposals(dir), read: fs.existsSync(inbox) ? [{ file: inbox, contentSha256: null, modified: fs.statSync(inbox).mtime.toISOString() }] : [] };
   }
 
   private async ledger(dir: string, kind: LedgerKind): Promise<{ json: unknown; sha: string | null; savedAt: string | null; read: ReadFrom[] }> {

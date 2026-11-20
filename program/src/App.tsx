@@ -51,6 +51,8 @@ import { checkChain, readMeta, moduleState, stampIdfContentSha, stampIfcContentS
 import { indexIfcDb, diffIndex, carryRulings, type FileIndex, type FileDiff, type RulingCase, type Ledgers, type Carry, type CarryRecord } from "./core/ifcChanges.js";
 import { rankParents, versionLabel, readLineageSidecar, type VersionCandidate, type RankedParent } from "./core/projectLookup.js";
 import { ProjectPanel, type ProjectView } from "./view/ProjectPanel.js";
+import { InboxPanel } from "./view/InboxPanel.js";
+import { readProposal, stagedWith, PROPOSAL_TAB, type Proposal, type ProposalRead } from "./modules/bem/core/proposals.js";
 import { FileChanges } from "./view/FileChanges.js";
 import { reviewRows, takenCases, rulingsToSave, type ReviewRow, type ImportChoice } from "./core/importReview.js";
 import { runBemPipeline, buildBemModel, readLatestRun, runCalibration, readLatestCalibration, type BemOutcome, type BemModelOutcome } from "./modules/bem/pipeline.js";
@@ -2469,6 +2471,56 @@ export function App(): React.ReactElement {
     stageTimerRef.current = t;
     return () => { clearTimeout(t); if (stageTimerRef.current === t) stageTimerRef.current = null; };
   }, [consStage, consGround, siteStage, schedStage, holStage, sysStage, gainStage, loadGen]);
+  // THE INBOX (2026-11-20): an assistant's proposals in the project's inbox/ (the separate MCP package writes them), read every few
+  // seconds and on focus. STAGE puts one in its tab's stage exactly as a hand edit would — the stage writer above keeps it, the tab's
+  // own Apply writes it — and moves the file to inbox/staged/; REJECT moves it to inbox/rejected/. Nothing here applies anything
+  const [proposals, setProposals] = useState<ProposalRead[]>([]);
+  const [siteGen, setSiteGen] = useState(0);
+  const readInbox = useCallback(async (): Promise<void> => {
+    if (!window.projectNow || !window.inbox) return;
+    try {
+      const files = await window.inbox.list();
+      const next = files.map((f) => readProposal(f.id, f.text));
+      setProposals((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    } catch { /* an inbox that cannot be read reads as empty this time */ }
+  }, []);
+  useEffect(() => {
+    void readInbox();
+    const t = setInterval(() => void readInbox(), 5000);
+    const f = (): void => void readInbox();
+    window.addEventListener("focus", f);
+    return () => { clearInterval(t); window.removeEventListener("focus", f); };
+  }, [readInbox]);
+  const stageProposal = async (pr: Proposal): Promise<void> => {
+    if (pr.made.ifcSha256 && shaRef.current && pr.made.ifcSha256 !== shaRef.current) { setStatus(`proposal ${pr.id} was made for another version of the IFC — not staged`); return; }
+    if (!shaRef.current) { setStatus("open the project's IFC first — a proposal stages into its rulings"); return; }
+    const c = pr.change;
+    switch (c.section) {
+      case "constructions": setConsStage((s) => stagedWith(s, c)); break;
+      case "ground": setConsGround((g) => (c.key === undefined ? ((c.value ?? undefined) as GroundRuling | undefined) : stagedWith(g, c))); break;
+      case "site": {
+        const cur = siteStage ?? bemLedger?.staged?.site ?? bemLedger?.site ?? EMPTY_SITE;
+        setSiteStage(c.key === undefined && c.value === null ? (bemLedger?.site ?? EMPTY_SITE) : stagedWith(cur, c) ?? EMPTY_SITE);
+        setSiteGen((g) => g + 1);   // the SITE column holds its stage itself: it takes the new one afresh
+        break;
+      }
+      case "schedules": setSchedStage((s) => stagedWith(s, c)); break;
+      case "holidays": setHolStage((h) => (c.key === undefined ? (c.value as DaySetDef | null) : stagedWith(h, c))); break;
+      case "gains": setGainStage((g) => stagedWith(g, c)); break;
+    }
+    try {
+      await window.inbox.move(pr.id, "staged");
+      const tab = PROPOSAL_TAB[c.section];
+      setTab(tab);
+      setStatus(`proposal staged on ${TABS.find((t) => t.id === tab)?.label ?? tab} — check it, then Apply there (or revert)`);
+    } catch (e) { setStatus(`the proposal was staged but its file could not be moved: ${e instanceof Error ? e.message : String(e)}`); }
+    void readInbox();
+  };
+  const rejectProposal = async (id: string): Promise<void> => {
+    try { await window.inbox.move(id, "rejected"); setStatus(`proposal ${id} rejected — moved to inbox/rejected/`); }
+    catch (e) { setStatus(`could not reject ${id}: ${e instanceof Error ? e.message : String(e)}`); }
+    void readInbox();
+  };
   // the last word on a reload or a quit: a pending write goes to disk synchronously from the journal
   useEffect(() => {
     const flush = (): void => {
@@ -5554,10 +5606,12 @@ export function App(): React.ReactElement {
               ))}
             </div>
           )}
+          <InboxPanel reads={proposals} ifcSha={shaRef.current || null} idfSha={idfMetaRef.current?.get("content_sha256") ?? null} busy={bemBusy}
+            tabLabel={(t) => TABS.find((x) => x.id === t)?.label ?? t} onStage={(pr) => void stageProposal(pr)} onReject={(id) => void rejectProposal(id)} />
           {/* the tabs above stay put; only what is under them scrolls (user, 2026-10-02) */}
           <div className="editScroll">
           {tab === "bem-site" && (
-            <BemSite model={bemModel} codeTables={sources.energyCodes.tables ?? DEFAULT_CODE_TABLES} sources={{ own: window.projectNow ? templateSources : null, template: STANDARD_SOURCES, onSave: (next) => void saveSources(next) }} onCodesSaved={() => { energyCodesReadRef.current = null; void energyCodesRead().then(() => refreshBemModel()); }} county={countyZone} site={runRef.current?.site ?? null} elevation={runRef.current ? projectElevation(runRef.current) : null} trueNorth={runRef.current?.trueNorth ?? null}
+            <BemSite key={siteGen} model={bemModel} codeTables={sources.energyCodes.tables ?? DEFAULT_CODE_TABLES} sources={{ own: window.projectNow ? templateSources : null, template: STANDARD_SOURCES, onSave: (next) => void saveSources(next) }} onCodesSaved={() => { energyCodesReadRef.current = null; void energyCodesRead().then(() => refreshBemModel()); }} county={countyZone} site={runRef.current?.site ?? null} elevation={runRef.current ? projectElevation(runRef.current) : null} trueNorth={runRef.current?.trueNorth ?? null}
               epw={bemLedger?.weather?.epw ?? null} epwList={epwList} ruling={bemLedger?.site ?? EMPTY_SITE} busy={bemBusy || bemRunning} imperial={imperial}
               onEpw={chooseEpw} onPickEpw={() => void pickEpw()} onApply={applySite} staged={siteStage ?? bemLedger?.staged?.site} onStage={setSiteStage}
               sun={sun} onSun={setSun} cycle={cycle} onCycle={setCycle} deciduous={deciduous} onDeciduous={setDeciduous} intensity={intensity} onIntensity={setIntensity}

@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld("projectFolder", {
   reveal: () => ipcRenderer.invoke("project:reveal"),
   backup: () => ipcRenderer.invoke("project:backup"),
 });
+// THE INBOX (2026-11-20): an assistant's proposals in the project's inbox/, read and moved — never written by the app
+contextBridge.exposeInMainWorld("inbox", {
+  list: () => ipcRenderer.invoke("inbox:list"),
+  move: (id, to) => ipcRenderer.invoke("inbox:move", id, to),
+});
 contextBridge.exposeInMainWorld("bim", {
   openIfc: () => ipcRenderer.invoke("bim:open-ifc"),
   saveDb: (name, bytes) => ipcRenderer.invoke("bim:save-db", name, bytes),

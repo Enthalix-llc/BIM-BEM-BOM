@@ -78,6 +78,29 @@ function saveUser(what, write) {
 ipcMain.handle("app:read-home-file", async (_ev, rel) => {
   try { const h = homeDir(), r = path.resolve(h, String(rel)); if (!(r === h || r.startsWith(h + path.sep))) throw new Error("outside the project folder"); return fs.readFileSync(r, "utf8"); } catch { return null; }
 });
+// THE INBOX (2026-11-20): proposals an assistant left in <project>/inbox/ (the separate MCP package writes them; the app ships no AI).
+// Read as text here, checked by the renderer's own code; a proposal leaves the list only by the user's Stage or Reject, which moves
+// its file to inbox/staged/ or inbox/rejected/ — never deleted, so the assistant can read what became of it
+const inboxDir = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "inbox") : null);
+const INBOX_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
+ipcMain.handle("inbox:list", async () => {
+  const d = inboxDir();
+  if (!d || !fs.existsSync(d)) return [];
+  return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith(".json") && INBOX_ID.test(e.name.slice(0, -5))).map((e) => e.name.slice(0, -5)).sort().map((id) => `${id}.json`)
+    .slice(0, 200).map((f) => { try { const t = fs.readFileSync(path.join(d, f), "utf8"); return { id: f.slice(0, -5), text: t.length > 1_000_000 ? "" : t }; } catch (e) { return { id: f.slice(0, -5), text: "" }; } });
+});
+ipcMain.handle("inbox:move", async (_ev, id, to) => {
+  const d = inboxDir();
+  if (!d) throw new Error("no project open");
+  if (!INBOX_ID.test(String(id)) || (to !== "staged" && to !== "rejected")) throw new Error("not a proposal");
+  const from = path.join(d, `${id}.json`);
+  if (!fs.existsSync(from)) throw new Error(`no proposal ${id}`);
+  fs.mkdirSync(path.join(d, to), { recursive: true });
+  let dest = path.join(d, to, `${id}.json`);
+  for (let n = 2; fs.existsSync(dest); n++) dest = path.join(d, to, `${id}-${n}.json`);
+  fs.renameSync(from, dest);
+  return path.relative(PROJECT_DIR, dest);
+});
 const ifcDir = () => (PROJECT_DIR ? path.join(PROJECT_DIR, "ifc") : [path.join(homeDir(), "references", "ifc"), path.join(SHIPPED_DIR, "references", "ifc")].find((d) => fs.existsSync(d)) ?? homeDir());
 const REF_DIR = path.join(SHIPPED_DIR, "references");
 

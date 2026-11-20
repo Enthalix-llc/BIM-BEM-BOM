@@ -3,7 +3,7 @@
 //
 // THE MCP SERVER (stdio): an assistant's client starts it as a local process with the projects folder as its one argument —
 //   tsx src/server.ts ~/Documents/Enthalix/Projects
-// No network port. Every tool reads, but run_scenario, which writes only its own run folder (cache/mcp/runs); the tools are fixed, take named arguments checked here, and
+// No network port. Every tool reads, but run_scenario (its own run folder, cache/mcp/runs) and propose_ruling (a file in inbox/); the tools are fixed, take named arguments checked here, and
 // run no code, shell command or SQL they are handed. The app itself ships none of this (the user's ruling, 2026-11-17).
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -11,11 +11,12 @@ import { z } from "zod";
 import { Projects, Refusal } from "./project.js";
 import { Tools, LEDGER_KINDS, type Reply } from "./tools.js";
 import { PREVIEW_SECTIONS } from "./preview.js";
+import { PROPOSAL_SECTIONS } from "../../program/src/modules/bem/core/proposals.js";
 
 const root = process.argv[2];
 if (!root) { process.stderr.write("usage: bim-bem-bom-mcp <projects folder>\n"); process.exit(2); }
 const tools = new Tools(new Projects(root));
-const server = new McpServer({ name: "bim-bem-bom", version: "0.3.0" });
+const server = new McpServer({ name: "bim-bem-bom", version: "0.4.0" });
 
 const project = z.string().describe("the project's folder name, as list_projects gives it");
 const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -78,5 +79,17 @@ server.registerTool("run_scenario", {
   };
   return answer(() => tools.run_scenario(a as { project: string; change?: { section: (typeof PREVIEW_SECTIONS)[number]; key?: string; value: unknown } }, onLine));
 });
+
+server.registerTool("propose_ruling", {
+  description: "Leave one BEM ruling as a PROPOSAL in the project's inbox/ for the user — nothing is applied. The app shows it with your reason, the preview and (when `scenario` names a run_scenario stamp made with the same change) that year beside the last run; the user stages it on its tab and applies it there, or rejects it. Sections a tab stages: site, constructions, ground, schedules, holidays, gains. Preview it first; say plainly why.",
+  inputSchema: { project, change: z.object({ section: z.enum(PROPOSAL_SECTIONS), key: z.string().optional(), value: z.unknown() }), reason: z.string().describe("why, in words the user reads before staging it"), scenario: z.string().optional().describe("the stamp of a run_scenario made with this same change") },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+}, (a) => answer(() => tools.propose_ruling(a as { project: string; change: { section: (typeof PROPOSAL_SECTIONS)[number]; key?: string; value: unknown }; reason: string; scenario?: string })));
+
+server.registerTool("proposals", {
+  description: "The proposals in the project's inbox: waiting for the user, staged by the user, and rejected by the user.",
+  inputSchema: { project },
+  annotations: ro,
+}, (a) => answer(() => tools.proposals(a)));
 
 await server.connect(new StdioServerTransport());
