@@ -89,6 +89,8 @@ import { parseIoReferenceIndex, ioRefVersionOf, ioRefIndexUrl, ioRefCacheName, t
 import { readCatalogue, type Catalogue } from "./modules/bem/core/epCatalogue.js";
 import { FOCUS, SECTION_LABELS, MAIN_OF, type SystemSection } from "./modules/bem/core/mepFocus.js";
 import { BemResultsPanel, BemRunPanel } from "./modules/bem/view/BemPanels.js";
+import { UnmetHoursFrame, UnmetTimeline, unmetValues, firstUnmetAt, type UnmetAt } from "./modules/bem/view/UnmetHours.js";
+import { divergenceSpan } from "./modules/bem/core/zoneDivergence.js";
 import { paintRows, LENSES, categorical, type Lens, type Legend } from "./modules/bem/core/bemPaint.js";
 import { sunPosition, sunDirection, northDirection, northAxisFromTrueNorth, fmtHour, dayOfYear, monthDayOf, type SunPosition } from "./core/sun.js";
 import { treeTransmittance } from "./core/shadingSchedule.js";
@@ -285,6 +287,7 @@ export function App(): React.ReactElement {
   lensChoiceRef.current = lens;
   const lensRef = useRef<((row: DbFaceRow) => number | null) | null>(null);
   const [legend, setLegend] = useState<Legend | null>(null);
+  const lensNameRef = useRef<Lens>("none"); const legendRef = useRef<Legend | null>(null);
   const idfMetaRef = useRef<Map<string, string> | null>(null);
   const [selZone, setSelZone] = useState<string | null>(null);
   const selZoneRef = useRef(selZone); selZoneRef.current = selZone;
@@ -841,7 +844,11 @@ export function App(): React.ReactElement {
   const cfdSaveChain = useRef<Promise<void>>(Promise.resolve());
   const [bomSel, setBomSel] = useState<BomCardSel | null>(null);
   const [bomTariff, setBomTariff] = useState<BomLedger["tariff"] | undefined>(undefined);
-  const [runView, setRunView] = useState<"graphs" | "model" | "report">(() => { try { const v = window.localStorage.getItem("bim-run-view"); return v === "model" || v === "report" ? v : "graphs"; } catch { return "graphs"; } });
+  const [runView, setRunView] = useState<"graphs" | "model" | "report" | "unmet">(() => { try { const v = window.localStorage.getItem("bim-run-view"); return v === "model" || v === "report" || v === "unmet" ? v : "graphs"; } catch { return "graphs"; } });
+  // RUN › UNMET HOURS (2026-11-22): the timeline's window and the zones the table selected
+  const [unmetAt, setUnmetAt] = useState<UnmetAt>({ scale: "month", i: 0 });
+  const unmetAtRef = useRef(unmetAt); unmetAtRef.current = unmetAt;
+  const [unmetSel, setUnmetSel] = useState<string[]>([]);
   useEffect(() => { try { window.localStorage.setItem("bim-run-view", runView); } catch { /* view state only */ } requestAnimationFrame(() => window.dispatchEvent(new Event("resize"))); }, [runView]);
   // "-2" (2026-10-02): the Annual series grew by total use and the utility lines, so an earlier pick does not hide them
   // RUN opens on GRAPHS · ANNUAL (user, 2026-10-12: "Place Graphs - Annual as first offering in Run View") — the lines, scale and parts as left
@@ -1151,6 +1158,8 @@ export function App(): React.ReactElement {
           chain: formatChain(chainRef.current),
           carry: carryRef.current ? { prevSha: carryRef.current.diff.prevSha.slice(0, 12), overlap: carryRef.current.diff.overlap, changes: carryRef.current.diff.changes.map((c) => `${c.kind} ${c.what} ${c.label}${c.diffs.length ? ` — ${c.diffs.join("; ")}` : ""}`), cases: carryRef.current.cases.map((c) => `${c.verdict} ${c.ledger}/${c.kind}: ${c.label}`), take: [...carryRef.current.take], record: carryRef.current.record } : null,
           staged: { constructions: Object.keys(bemLedgerRef.current?.staged?.constructions ?? {}).length, ground: !!bemLedgerRef.current?.staged?.ground, site: !!bemLedgerRef.current?.staged?.site, schedules: Object.keys(bemLedgerRef.current?.staged?.schedules ?? {}).length, systems: !!bemLedgerRef.current?.staged?.systems, gains: gainRulingCount(bemLedgerRef.current?.staged?.gains), zones: Object.keys(zoneStageRef.current).length, at: bemLedgerRef.current?.staged?.at ?? null, journal: (() => { const j = shaRef.current ? readJournal(window.localStorage, shaRef.current) : null; return j ? { at: j.at, sheet: (j.systems?.assembly?.nodes ?? []).map((n) => n.id) } : null; })(), disk: savedStagedRef.current ? { at: savedStagedRef.current.at, sheet: (savedStagedRef.current.systems?.assembly?.nodes ?? []).map((n) => n.id) } : savedStagedRef.current, draft: draftNote },
+          // RUN › UNMET HOURS (2026-11-22): the lens painting the model, the timeline's window, each zone's colour value
+          unmet: { lens: lensNameRef.current, at: unmetAtRef.current, painted: legendRef.current?.painted ?? 0, zones: (legendRef.current?.entries ?? []).filter((e) => e.value !== null).map((e) => ({ zone: e.zone, c: e.value, color: e.color === null ? null : (e.color >>> 0).toString(16) })) },
           zonesTab: { selZone: selZoneRef.current, selRooms: selRoomsRef.current, selSpace: selSpaceNameRef.current, frame: zoneFrameTabRef.current, staged: gainRulingCount(gainStageRef.current), rooms: bemModelRef.current?.rooms.length ?? 0 },
           schedules: { calendar: { view: schedViewRef.current, level: calAtRef.current.level, n: calAtRef.current.n, card: schedCardRef.current, cells: document.querySelectorAll(".calCell").length }, staged: schedStageRef.current, applied: bemLedgerRef.current?.schedules ?? {}, rows: bemModelRef.current?.schedules.map((r) => ({ role: r.role, name: r.name, source: r.source, inUse: r.inUse })) ?? null },
           systems: { focus: sysFocusRef.current, selected: [...selMepRef.current], stage: sysStageRef.current, applied: bemLedgerRef.current?.systems ?? null, assembly: { nodes: (sysStageRef.current.assembly?.nodes ?? []).map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, attached: n.attached, label: n.label, ident: n.ident, rooms: n.rooms })), zones: (() => { const c = compileAssembly(sysStageRef.current.assembly ?? { nodes: [], edges: [] }, bemModelRef.current?.input.zones.map((z) => z.name) ?? [], sysStageRef.current.assign ?? {}); return c.zones; })(), saved: savedDiagramRef.current, edges: sysStageRef.current.assembly?.edges ?? [], assign: sysStageRef.current.assign ?? {}, sel: asmSelRef.current, view: sysView, compiled: (() => { const c = compileAssembly(sysStageRef.current.assembly ?? { nodes: [], edges: [] }, bemModelRef.current?.input.zones.map((z) => z.name) ?? [], sysStageRef.current.assign ?? {}); return { hvac: c.hvac.map((h) => ({ id: h.id, kind: h.kind, zones: h.zones, fields: h.fields, doas: h.doas?.id, hotWater: h.plant?.hotWater?.id, controlZone: h.wired?.controlZone, loop: h.wired?.loop })), refusals: c.refusals, cautions: c.cautions, splitIds: c.splitIds, loops: c.loops.map((l) => ({ id: l.id, consumers: l.consumers })) }; })() }, rows: bemModelRef.current?.systems.map((r) => ({ id: r.id, section: r.section, kind: r.kind, source: r.source, zones: r.zones.length, objects: r.objects, refused: r.refused.length })) ?? null, unresolved: bemModelRef.current?.built.unresolvedSystems ?? null, mep: { elements: mepElementsRef.current.length, interior: mepElementsRef.current.filter((e) => e.interior).length, inFocus: mepElementsRef.current.filter(FOCUS[sysFocusRef.current]).length, byDiscipline: Object.fromEntries(["mechanical", "electrical", "plumbing", "other"].map((d) => [d, mepElementsRef.current.filter((e) => e.discipline === d).length])), systems: mepSystemsRef.current.length }, schema: schemaRef.current?.census ?? null, ioReference: ioRefRef.current ? { version: ioRefRef.current.version, links: ioRefRef.current.entries.length, classLinks: ioRefRef.current.classLinks } : null },
@@ -1417,7 +1426,7 @@ export function App(): React.ReactElement {
   if (module === "bem" && tab === "bem-systems") { eff.clear(); eff.add("assembly"); }
   // SCHEDULES: the calendar alone — the zone model has no bearing on a schedule (user, 2026-10-15)
   if (module === "bem" && tab === "bem-schedules") { eff.clear(); eff.add("calendar"); }
-  if (module === "bem" && tab === "bem-run") { eff.clear(); eff.add(runView === "graphs" ? "graphs" : runView === "report" ? "report" : "idf"); }
+  if (module === "bem" && tab === "bem-run") { eff.clear(); eff.add(runView === "graphs" ? "graphs" : runView === "report" ? "report" : "idf"); }   // "model" and "unmet" are the model
   // BOM: the main view is ENERGY & COST alone — the model's two views served no purpose there (user, 2026-10-15)
   // BOM › CFD: the model, the supply air drawn in it as arrows (user, 2026-11-04)
   const cfdTab = module === "bom" && tab === "bom-cfd";
@@ -2084,16 +2093,32 @@ export function App(): React.ReactElement {
           return new Map([...(outcome.designSurfaceTemps?.[day] ?? new Map<string, number[]>())].map(([k, a]) => [k, a[h - 1] ?? NaN] as const));
         })()
         : l === "window-net" ? outcome.windowNet : outcome.surfaceConduction,
+      ...(l === "zone-divergence" ? { zone: unmetValues(outcome.zoneDivergence ?? [], unmetAtRef.current), span: divergenceSpan(outcome.zoneDivergence ?? []) } : {}),
       // the zones' design-day peaks (the engine's zone sizing), for the peak lenses and every legend (2026-10-08)
       peaks: new Map([...outcome.loads.zones].map(([k, z]) => [k.toUpperCase(), { heatW: z.designHeatingW, coolW: z.designCoolingW }] as const)),
     };
     const { colorOf, legend: lg } = paintRows(idfRowsRef.current, outcome.surfaces, values, l, outcome.report?.northAxisDeg ?? 0);
-    lensRef.current = colorOf; setLegend(lg); applyHidden();
+    lensRef.current = colorOf; lensNameRef.current = l; legendRef.current = lg; setLegend(lg); applyHidden();
   }, [applyHidden]);
   // RUN's model shows the surface temperatures (2026-10-12): whenever it is the view, a lens of another kind becomes the winter design day's
   useEffect(() => {
     if (module === "bem" && tab === "bem-run" && runView === "model" && bem?.designSurfaceTemps && lens !== "surface-temp-winter" && lens !== "surface-temp-summer") applyLens("surface-temp-winter");
+    // RUN › UNMET HOURS paints the zones' divergence; the lens leaves with the view (no other tab offers it)
+    if (module === "bem" && tab === "bem-run" && runView === "unmet" && bem && lens !== "zone-divergence") applyLens("zone-divergence");
+    if (lens === "zone-divergence" && !(module === "bem" && tab === "bem-run" && runView === "unmet")) applyLens("none");
   }, [module, tab, runView, bem, lens, applyLens]);
+  // a new run's timeline opens on the month with the most hours not met; the window moved repaints
+  useEffect(() => { setUnmetAt(firstUnmetAt(bem?.zoneDivergence ?? [])); }, [bem?.stamp]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (lens === "zone-divergence") applyLens("zone-divergence"); }, [unmetAt]);   // eslint-disable-line react-hooks/exhaustive-deps
+  /** a zone row of the UNMET HOURS table: the zone's spaces lit in the model and the tree (⌘/Ctrl adds) */
+  const selectUnmetZone = (zone: string, add: boolean): void => {
+    const next = add ? (unmetSel.includes(zone) ? unmetSel.filter((z) => z !== zone) : [...unmetSel, zone]) : [zone];
+    setUnmetSel(next);
+    const rooms = new Set<string>(next);
+    for (const r of bemRef.current?.rooms ?? []) if (next.includes(r.zone)) rooms.add(r.room);
+    setSelSpace(null); setSel(null); setSelRow(null); setSelSpaceName(null); setSelLevel(null); setHi(null); setTableSpace(null);
+    setSelRooms(next.length ? [...rooms] : null);
+  };
   // THE APP'S RUN IS THE GATE'S RUN: the same core, from data/idf.db's bytes
   const runBem = useCallback(async () => {
     if (bemRunning) return;
@@ -5221,9 +5246,9 @@ export function App(): React.ReactElement {
                 shown hid the other behind the frame's title) */}
             {tab === "bem-run" && <button className={graphView && runGraph.section === "annual" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "annual" }); }} title="the run's year graphed by the hour: outside temperature, heating and cooling, ventilation, occupant loads, PV, bought and sold — the frame below picks the lines and the window">GRAPHS · ANNUAL</button>}
             {tab === "bem-run" && <button className={graphView && runGraph.section === "peak" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "peak" }); }} title="peak conditioning per structure and per zone on the design days — the frame below picks the parts">GRAPHS · PEAK</button>}
-            {tab === "bem-run" && <button className={graphView && runGraph.section === "unmet" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "unmet" }); }} title="the hours each conditioned zone's setpoint was not met, month by month, with the zone's spaces — unconditioned zones are not listed">UNMET HOURS</button>}
+            {tab === "bem-run" && <button className={runView === "unmet" ? "on" : ""} onClick={() => setRunView("unmet")} title="the model painted by how far each conditioned zone's air missed its setpoint — blue too cold, red too hot — over a month, day or hour the timeline under the model picks; the table of hours not met, by month and by degree, in the frame below">UNMET HOURS</button>}
             {tab === "bem-run" && <button className={reportView ? "on" : ""} onClick={() => setRunView("report")} title="EnergyPlus's own tabular report (eplustbl.htm) for the run, as the engine wrote it — the end uses, the zone and space component loads, sizing, envelope; a run that ended Fatal shows its error file">REPORT · ENGINE</button>}
-            {tab !== "bem-constructions" && tab !== "bem-schedules" && tab !== "bem-systems" && <button className={eff.has("idf") ? "on" : ""} onClick={() => (tab === "bem-run" ? (setRunView("model"), lens !== "surface-temp-winter" && lens !== "surface-temp-summer" && applyLens("surface-temp-winter")) : toggleView("idf"))} title={tab === "bem-site" ? (siteView === "location" ? "the project location — OpenStreetMap" : siteView === "weather" ? "the weather stations — EnergyPlus's weather repository" : siteView === "solar" ? "the model under its terrain, with the site's shading elements and the sun" : "the model; the files beside the house are listed below")
+            {tab !== "bem-constructions" && tab !== "bem-schedules" && tab !== "bem-systems" && <button className={(tab === "bem-run" ? runView === "model" : eff.has("idf")) ? "on" : ""} onClick={() => (tab === "bem-run" ? (setRunView("model"), lens !== "surface-temp-winter" && lens !== "surface-temp-summer" && applyLens("surface-temp-winter")) : toggleView("idf"))} title={tab === "bem-site" ? (siteView === "location" ? "the project location — OpenStreetMap" : siteView === "weather" ? "the weather stations — EnergyPlus's weather repository" : siteView === "solar" ? "the model under its terrain, with the site's shading elements and the sun" : "the model; the files beside the house are listed below")
                 : tab === "bem-zones" ? `the model alone, no site — painted ${lens === "none" ? "by the sheet's Zones; rooms in none are grey" : `by ${LENSES.find((l) => l.id === lens)?.label ?? lens}`}`
                 : tab === "bem-run" ? `the exterior surface temperatures, the ${lens === "surface-temp-summer" ? "summer" : "winter"} design day`
                 : `the zone model: every cell painted by ${lens === "none" ? "the zone behind it" : LENSES.find((l) => l.id === lens)?.label ?? lens}`}>
@@ -5351,6 +5376,10 @@ export function App(): React.ReactElement {
               </div>
             );
           })()}
+          {module === "bem" && tab === "bem-run" && runView === "unmet" && bem && (bem.zoneDivergence?.length
+            ? <UnmetTimeline zs={bem.zoneDivergence} span={divergenceSpan(bem.zoneDivergence)} at={unmetAt} onAt={setUnmetAt} imperial={imperial}
+                names={new Map(bem.zones.map((z) => [z.epName.toUpperCase(), z.name] as const))} />
+            : <div className="viewLegend"><b>this run holds no hourly zone temperatures — Run EnergyPlus again for the colours and the timeline</b></div>)}
           {intensityLegend && tab === "bem-site" && (
             <div className="viewLegend">
               <b>solar intensity · {imperial ? "W/ft²" : "W/m²"} on {intensityLegend.painted} exterior surfaces</b>
@@ -5544,7 +5573,7 @@ export function App(): React.ReactElement {
           )}
           {module === "bem" && tab === "bem-run" && graphView && (
             <section>
-              <h4 title={runGraph.section === "annual" ? "the lines the graph draws, summed over the window in view and at the points clicked" : "the parts and loads the view draws"}>RUN · {runGraph.section === "annual" ? "ANNUAL — the lines summed" : runGraph.section === "unmet" ? "UNMET HOURS" : "PEAK"}{bem ? ` · run ${bem.stamp}` : " · no run yet"}</h4>
+              <h4 title={runGraph.section === "annual" ? "the lines the graph draws, summed over the window in view and at the points clicked" : "the parts and loads the view draws"}>RUN · {runGraph.section === "annual" ? "ANNUAL — the lines summed" : "PEAK"}{bem ? ` · run ${bem.stamp}` : " · no run yet"}</h4>
               <RunGraphFrame state={runGraph} onState={setRunGraph} bem={bem} imperial={imperial} spacesByZone={bemModel?.report.model.spacesByZone} />
             </section>
           )}
@@ -5567,7 +5596,13 @@ export function App(): React.ReactElement {
           )}
           {/* THE LENS UNDER THE VIEW (user, 2026-10-08: "Those values are seen in the view, so it needs to be under the view"): on RUN, the
               picker and its legend — each zone in its colour with its heating and cooling peaks — in the frame under the zone model it paints */}
-          {module === "bem" && tab === "bem-run" && eff.has("idf") && !graphView && !reportView && (
+          {module === "bem" && tab === "bem-run" && runView === "unmet" && (
+            <section>
+              <h4 title="the hours each conditioned zone's setpoint was not met — a row selects the zone, a month moves the timeline, a double-click drops the hours by degree">RUN · UNMET HOURS{bem ? ` · run ${bem.stamp}` : " · no run yet"}</h4>
+              {bem ? <UnmetHoursFrame bem={bem} imperial={imperial} selected={unmetSel} onSelect={selectUnmetZone} onMonth={(h) => setUnmetAt({ scale: "month", i: h })} /> : <div className="muted">no run yet</div>}
+            </section>
+          )}
+          {module === "bem" && tab === "bem-run" && eff.has("idf") && !graphView && !reportView && runView !== "unmet" && (
             <section className="lensFrame">
               {/* SURFACE TEMPERATURES (user, 2026-10-12: "The IDF-DB Zone model wasn't requested, as it is redundant, although I did ask for
                   surface temperatures to be shown"): RUN's model is painted by the design-day surface temperatures alone */}
@@ -5581,7 +5616,7 @@ export function App(): React.ReactElement {
                   : undefined} />
             </section>
           )}
-          <section hidden={!views.idf || (module === "bom" && costView) || cfdTab || (module === "bem" && (tab === "bem-constructions" || tab === "bem-site" || tab === "bem-systems" || tab === "bem-zones" || tab === "bem-schedules" || (tab === "bem-run" && (graphView || reportView))))}>
+          <section hidden={!views.idf || (module === "bom" && costView) || cfdTab || (module === "bem" && (tab === "bem-constructions" || tab === "bem-site" || tab === "bem-systems" || tab === "bem-zones" || tab === "bem-schedules" || (tab === "bem-run" && (graphView || reportView || runView === "unmet"))))}>
             <h4>IDF-DB · {shownSpace ?? (sel ? "no room claims this element" : "—")} · net areas in {imperial ? "ft²" : "m²"}</h4>
             {related.tableSpaces.length > 1 && (
               <div className="spaceTabs">

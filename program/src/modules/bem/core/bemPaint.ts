@@ -10,7 +10,10 @@
 import type { DbFaceRow } from "../../../core/db.js";
 import type { BemSurfaceRow } from "./bemDb.js";
 
-export type Lens = "none" | "zone-heating" | "zone-cooling" | "zone-heating-peak" | "zone-cooling-peak" | "zone-unmet" | "surface-conduction" | "window-net" | "surface-temp-summer" | "surface-temp-winter" | "zone" | "bc";
+export type Lens = "none" | "zone-heating" | "zone-cooling" | "zone-heating-peak" | "zone-cooling-peak" | "zone-unmet" | "surface-conduction" | "window-net" | "surface-temp-summer" | "surface-temp-winter" | "zone" | "bc"
+  /** RUN › UNMET HOURS (2026-11-22): each conditioned zone's divergence from its setpoint over the timeline's window, °C signed —
+   *  blue too cold, red too hot, over a span fixed for the year; not in LENSES (it needs the window the view's timeline sets) */
+  | "zone-divergence";
 
 export const LENSES: Array<{ id: Lens; label: string; units: string }> = [
   { id: "none", label: "no lens — the stored colours", units: "" },
@@ -35,7 +38,7 @@ export const LENSES: Array<{ id: Lens; label: string; units: string }> = [
 export type Ramp = "red" | "blue" | "temp" | "seq" | "div";
 export const rampOf = (lens: Lens): Ramp =>
   lens === "zone-heating" || lens === "zone-heating-peak" ? "red" : lens === "zone-cooling" || lens === "zone-cooling-peak" ? "blue"
-    : lens === "surface-temp-summer" || lens === "surface-temp-winter" ? "temp" : lens === "surface-conduction" || lens === "window-net" ? "div" : "seq";
+    : lens === "surface-temp-summer" || lens === "surface-temp-winter" ? "temp" : lens === "surface-conduction" || lens === "window-net" || lens === "zone-divergence" ? "div" : "seq";
 export interface Legend { lens: Lens; ramp: Ramp; min: number; max: number; units: string; painted: number; unpainted: number; notEmitted: number;
   /** each zone in its colour with its design-day heating and cooling peaks (2026-10-08) — empty before a run */
   entries: Array<{ zone: string; color: number | null; value: number | null; heatW: number | null; coolW: number | null }>;
@@ -79,7 +82,7 @@ export function categorical(i: number): number {
 export function paintRows(
   rows: DbFaceRow[],
   surfaces: BemSurfaceRow[],
-  values: { zone?: Map<string, number>; surface?: Map<string, number>; peaks?: Map<string, { heatW: number; coolW: number }> },
+  values: { zone?: Map<string, number>; surface?: Map<string, number>; peaks?: Map<string, { heatW: number; coolW: number }>; span?: number },
   lens: Lens,
   /** the Building north axis (°): a surface's facing is read from true north (2026-10-08) */
   northAxisDeg = 0,
@@ -104,7 +107,7 @@ export function paintRows(
       if (p) value.set(r.id, lens === "zone-heating-peak" ? p.heatW : p.coolW);
       continue;
     }
-    if (lens === "zone-heating" || lens === "zone-cooling" || lens === "zone-unmet") {
+    if (lens === "zone-heating" || lens === "zone-cooling" || lens === "zone-unmet" || lens === "zone-divergence") {
       const v = values.zone?.get(first.zone.toUpperCase());
       if (v !== undefined) value.set(r.id, v);
       continue;
@@ -148,6 +151,7 @@ export function paintRows(
     if (lens === "zone" || lens === "bc") { const c = cat.get(row.id); return c === undefined ? GREY : categorical(catIndex.get(c) ?? 0); }
     const v = value.get(row.id);
     if (v === undefined) return GREY;
+    if (lens === "zone-divergence") return diverging(clamp01(Math.abs(v) / (values.span || 1)) * Math.sign(v));
     if (lens === "surface-conduction" || lens === "window-net") {
       const span = Math.max(Math.abs(min), Math.abs(max)) || 1;
       return diverging(clamp01(Math.abs(v) / span) * Math.sign(v));
@@ -159,12 +163,13 @@ export function paintRows(
     const u = z.toUpperCase(), p = values.peaks?.get(u);
     if (lens === "zone-heating-peak") return p ? p.heatW : null;
     if (lens === "zone-cooling-peak") return p ? p.coolW : null;
-    if (lens === "zone-heating" || lens === "zone-cooling" || lens === "zone-unmet") return values.zone?.get(u) ?? null;
+    if (lens === "zone-heating" || lens === "zone-cooling" || lens === "zone-unmet" || lens === "zone-divergence") return values.zone?.get(u) ?? null;
     return null;
   };
   const zoneColor = (z: string): number | null => {
     if (lens === "zone") return categorical(catIndex.get(z) ?? 0);
     const v = zoneVal(z);
+    if (lens === "zone-divergence") return v === null ? null : diverging(clamp01(Math.abs(v) / (values.span || 1)) * Math.sign(v));
     if (v === null || lens === "bc" || lens === "surface-conduction" || lens === "window-net" || ramp === "temp") return null;
     return shade(v);
   };

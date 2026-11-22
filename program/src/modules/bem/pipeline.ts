@@ -11,6 +11,7 @@
 // the run beside the model. `pnpm gate:bem data/idf.db --compare
 // data/bem/runs/<stamp>/in.idf` must print IDENTICAL.
 
+import type { ZoneDivergence } from "./core/zoneDivergence.js";
 import type { CountyZoneRead } from "../../core/climateZone.js";
 import { parseIdfObjects, zoneEquipmentZones, withReportUnits, type Library } from "./core/idfLib.js";
 import type { EpSchema } from "./core/epSchema.js";
@@ -29,7 +30,7 @@ import { groundMethodOf, kivaReadsWeather, fFactor, cFactor } from "./core/groun
 import { RECORD_FILES, runSummary } from "./core/runRecord.js";
 import {
   openBemDb, writeModel, writeRun, stampBemContentSha, queryBemSurfaces, queryNotEmitted, queryResults, queryResultRows, queryDailyMeters, queryHourly, queryTariffs, provenanceCensus,
-  queryEndUses, queryFuelPeaks, querySizingDetails, queryDesignSurfaceTemps, queryCoilRates, queryComponentLoads, queryZoneBalance, queryMonthlyMeters, queryMonthlyByZone,
+  queryEndUses, queryFuelPeaks, querySizingDetails, queryDesignSurfaceTemps, queryCoilRates, queryComponentLoads, queryZoneBalance, queryMonthlyMeters, queryMonthlyByZone, queryZoneDivergence,
   querySettings, queryBemZones, queryConstructions, querySchedules, querySystems, querySystemQa, queryChecks, queryRooms, queryRuns,
   type BemLedger, type BemRun, type BemSurfaceRow,
 } from "./core/bemDb.js";
@@ -135,6 +136,8 @@ export interface BemOutcome extends BemModelOutcome {
   /** every zone's hours with its heating or cooling setpoint not met, month by month (2026-11-21, RUN's UNMET HOURS); empty for a run
    *  made before — its year is in the per-zone totals (the engine's SystemSummary), kept beside as `unmetYear` */
   monthlyUnmet: { heating: Map<string, number[]>; cooling: Map<string, number[]> };
+  /** each conditioned zone's hourly divergence from its setpoints (2026-11-22) — empty for a run before the hourly output was asked */
+  zoneDivergence: ZoneDivergence[];
   unmetYear: { heating: Map<string, number>; cooling: Map<string, number> };
 }
 
@@ -461,6 +464,7 @@ function runOutcome(again: Database, base: BemModelOutcome, stamp: string, run: 
     endUses: queryEndUses(again, stamp), fuelPeaks: fp.peaks, fuelPeakTimes: fp.times, sizingDetails: querySizingDetails(again, stamp), componentLoads: queryComponentLoads(again, stamp), zoneBalance: queryZoneBalance(again, stamp),
     monthlyMeters: kwhRows(queryMonthlyMeters(again, stamp)), monthlyZoneHeating: mzh, monthlyZoneCooling: mzc, zoneSource,
     monthlyUnmet: { heating: queryMonthlyByZone(again, stamp, "Zone Heating Setpoint Not Met Time"), cooling: queryMonthlyByZone(again, stamp, "Zone Cooling Setpoint Not Met Time") },
+    zoneDivergence: queryZoneDivergence(again, stamp),
     unmetYear: { heating: queryResults(again, stamp, "zone", "unmet_heating"), cooling: queryResults(again, stamp, "zone", "unmet_cooling") } };
 }
 

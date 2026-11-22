@@ -14,7 +14,7 @@ import { J_PER_KWH, BALANCE } from "../core/eplusSql.js";
 import { calendarHours } from "../core/runCalendar.js";
 import { coilRows, unitRows, designStamp, designDayShort, structurePeaks, type CoilRow, type UnitRow, type StructurePeak } from "./runResults.js";
 
-export type RunGraphSection = "annual" | "peak" | "unmet";
+export type RunGraphSection = "annual" | "peak";
 export type AnnualSeries = "use" | "heating" | "cooling" | "ventilation" | "lighting" | "equipment" | "hotwater" | "water" | "charging" | "renewable" | "purchased" | "surplus" | "net";
 export type PeakKind = "heating" | "cooling";
 /** THE TIME SCALE (user, 2026-10-03): "a time scale adjustment … with slider below view ranging from a day (showing 24 hours) to week
@@ -715,8 +715,7 @@ export function RunGraphs({ bem, state, imperial, modelSha, onState, structures,
   return (
     <div className="runGraphs">
       {stale && <div className="runStale">these results are from an earlier model (run {bem.stamp}) — the model has changed since; Run again to graph it</div>}
-      {state.section === "unmet" ? <UnmetHoursTable bem={bem} imperial={imperial} />
-      : state.section === "annual" ? <>
+      {state.section === "annual" ? <>
           <AnnualGraph bem={bem} shown={state.annual} scale={state.scale} start={state.start} temps={state.temps} imperial={imperial} onWindow={(scale, start) => onState(scale !== state.scale ? rescale(state, scale) : { ...state, start })}
             pick={state.pick ?? null} pick2={state.pick2 ?? null} onPick={(p, second) => onState(second ? { ...state, pick2: p } : { ...state, pick: p })} />
           {/* the lines to draw, under the graph (user, 2026-10-12: "We should have the graph selection components in the upper section below the graph") */}
@@ -843,13 +842,6 @@ export function RunGraphFrame({ state, onState, bem, imperial = false, spacesByZ
   };
   return (
     <div className="runFrame">
-      {state.section === "unmet" && (
-        <div className="runSection on">
-          <div className="idfInfo">The view lists each conditioned zone with its conditioned spaces, by the month its setpoint was not met.
-            A zone's spaces share one thermostat, so the hours are the zone's. Read beside it: the zone's heating and cooling (RUN › results),
-            its design load against its equipment's capacity (GRAPHS · PEAK), and its thermostat on ZONES.</div>
-        </div>
-      )}
       {state.section === "annual" && (
         <div className="runSection on">
           <div title={`left-click the graph for a point, right-click for a second: the range between them${state.pick || state.pick2 ? " — click a point again to clear it" : ""}`}><AnnualSums state={state} bem={bem} imperial={imperial} /></div>
@@ -897,59 +889,3 @@ export function RunGraphFrame({ state, onState, bem, imperial = false, spacesByZ
   );
 }
 
-/** THE UNMET HOURS (user, 2026-11-21: "the unmet hours should show on a Unmet Hours view as a table with spaces listed that show when
- *  temperatures were not met. If a space is unconditioned, then it should not be listed as unmet"): every CONDITIONED zone with hours
- *  its heating or cooling setpoint was not met, a row per side, the engine's own Zone … Setpoint Not Met Time month by month and the
- *  year; the zone's conditioned spaces beside it. A zone with none is named once at the foot; an unconditioned zone is never listed */
-export function UnmetHoursTable({ bem, imperial }: { bem: BemOutcome; imperial: boolean }): ReactNode {
-  const up = (s: string): string => s.toUpperCase();
-  const pick = <T,>(m: Map<string, T>, z: { name: string; epName: string }): T | undefined => m.get(up(z.epName)) ?? m.get(up(z.name));
-  const byMonth = bem.monthlyUnmet.heating.size + bem.monthlyUnmet.cooling.size > 0;
-  const zones = bem.zones.filter((z) => z.conditioned);
-  const unconditioned = bem.zones.filter((z) => !z.conditioned).map((z) => z.name);
-  const temp = (c: number | null): string => (c === null ? "—" : imperial ? `${(c * 9 / 5 + 32).toFixed(0)} °F` : `${c.toFixed(1)} °C`);
-  const hrs = (v: number): string => (v < 0.05 ? "" : v < 10 ? v.toFixed(1) : v.toFixed(0));
-  type Row = { side: "heating" | "cooling"; setC: number | null; months: number[] | null; total: number };
-  const groups = zones.map((z) => {
-    const spaces = bem.rooms.filter((r) => r.zone === z.name && r.conditioned).map((r) => r.room);
-    const rows: Row[] = (["heating", "cooling"] as const).map((side) => {
-      const months = pick(bem.monthlyUnmet[side], z) ?? null;
-      const total = months ? months.reduce((t, v) => t + v, 0) : pick(bem.unmetYear[side], z) ?? 0;
-      return { side, setC: side === "heating" ? z.heatingSetpointC : z.coolingSetpointC, months, total };
-    }).filter((r) => r.total >= 0.05);
-    return { zone: z.name, spaces: spaces.length ? spaces : [z.name], rows, worst: Math.max(0, ...rows.map((r) => r.total)) };
-  });
-  const hit = groups.filter((g) => g.rows.length).sort((a, b) => b.worst - a.worst);
-  const met = groups.filter((g) => !g.rows.length).map((g) => g.zone);
-  const sum = (side: "heating" | "cooling"): number => hit.reduce((t, g) => t + (g.rows.find((r) => r.side === side)?.total ?? 0), 0);
-  return (
-    <div className="unmetView">
-      <div className="runGraphNote">
-        UNMET HOURS · run {bem.stamp} — the hours each conditioned zone's air stood below its heating setpoint or above its cooling setpoint by
-        more than the engine's tolerance (0.2 °C = 0.36 °F, OutputControl:ReportingTolerances' default), month by month. Unconditioned zones
-        are not listed{unconditioned.length ? ` (${unconditioned.length}: ${unconditioned.join(", ")})` : ""}.
-        {!byMonth && <span className="runStale"> This run holds the year only — Run again for the months.</span>}
-      </div>
-      {hit.length === 0 ? <div className="runGraphNote">every conditioned zone met its setpoints every hour of the run</div> : (
-        <table className="runSums unmetTable">
-          <thead><tr><th>zone</th><th>spaces</th><th>side</th><th className="num">setpoint</th>
-            {byMonth && MONTHS.map((m) => <th key={m} className="num">{m}</th>)}<th className="num">year, h</th></tr></thead>
-          <tbody>
-            {hit.flatMap((g) => g.rows.map((r, i) => (
-              <tr key={`${g.zone}|${r.side}`} className={i === 0 ? "first" : ""}>
-                <td>{i === 0 ? g.zone : ""}</td>
-                <td className="spaces">{i === 0 ? g.spaces.join(", ") : ""}</td>
-                <td className={r.side === "heating" ? "heat" : "cool"}>{r.side}</td>
-                <td className="num">{temp(r.setC)}</td>
-                {byMonth && MONTHS.map((m, k) => <td key={m} className={`num${(r.months?.[k] ?? 0) >= 0.05 ? " hit" : ""}`}>{hrs(r.months?.[k] ?? 0)}</td>)}
-                <td className="num"><b>{hrs(r.total)}</b></td>
-              </tr>
-            )))}
-          </tbody>
-          <tfoot><tr><td colSpan={byMonth ? 16 : 4}>Σ over the zones listed: heating {hrs(sum("heating")) || "0"} h · cooling {hrs(sum("cooling")) || "0"} h — zone-hours, not the facility's (the engine's facility count is {bem.facility.unmetHeatingH.toFixed(1)} h heating · {bem.facility.unmetCoolingH.toFixed(1)} h cooling, occupied hours with any zone unmet)</td></tr></tfoot>
-        </table>
-      )}
-      {met.length > 0 && <div className="runGraphNote">met every hour: {met.join(", ")}</div>}
-    </div>
-  );
-}

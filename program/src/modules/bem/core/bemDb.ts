@@ -14,6 +14,7 @@
 // read: the model as run, the runs, and the results the paint and the tables
 // need, in one long table keyed by scope / key / month / metric.
 
+import { DIV_PREFIX, UNMET_PREFIX, type ZoneDivergence } from "./zoneDivergence.js";
 import type { CheckRow, ZoneSide } from "./modelChecks.js";
 import type { ScheduleDays } from "./scheduleDays.js";
 import type { DaySetDef } from "./scheduleParts.js";
@@ -687,7 +688,24 @@ export function writeRun(db: Database, run: BemRun, results: RunResults | null):
   // THE HOURS (2026-10-03): one row per series, its values as a JSON list — kept for the LATEST run only (8760 values a series; RUN's
   // day and week views read them), an earlier run's hours dropped when a new run is written
   // the coils' hourly rates over the weather year ride in the hourly table under "coil|<kind>|<COIL>" — kept out of the meters' reading
-  writeHourly(db, run, [...(results.hourly ?? []), ...(results.coilYear ?? []).map((c) => ({ name: `${COIL_PREFIX}${c.kind}|${c.coil}`, units: "W", values: c.values }))]);
+  writeHourly(db, run, [...(results.hourly ?? []), ...(results.coilYear ?? []).map((c) => ({ name: `${COIL_PREFIX}${c.kind}|${c.coil}`, units: "W", values: c.values })),
+    // each conditioned zone's hourly divergence and not-met time (2026-11-22, RUN › UNMET HOURS) — kept out of the meters' reading too
+    ...(results.zoneDivergence ?? []).flatMap((z) => [
+      { name: `${DIV_PREFIX}${z.zone}`, units: "C", values: z.div, ...(z.start ? { start: z.start } : {}) },
+      { name: `${UNMET_PREFIX}${z.zone}`, units: "hr", values: z.unmet, ...(z.start ? { start: z.start } : {}) }])]);
+  pruneHeavyResults(db, run);
+}
+
+/** THE PER-SURFACE RESULTS ARE THE LATEST RUN'S ONLY (2026-11-22, the user: "the electron run keeps showing a limit issue"): measured
+ *  on a test house, bem.db had grown to 524 MB — 38 runs × ~100,000 result rows, 1.10 M of them the design days' surface temperatures and
+ *  0.57 M the monthly surface values — and the page loads bem.db whole, so a few runs took it to its 4.4 GB limit. Those three scopes feed
+ *  the latest run's lenses, CFD and the surface tables alone, so an older run of the same kind keeps its summary (end uses, zones,
+ *  loads, unmet hours) and drops them — the hours' own rule. Its eplusout.sql stays in its run folder, so nothing is lost. The file is
+ *  compacted when rows went */
+export function pruneHeavyResults(db: Database, run: BemRun): void {
+  db.run(`DELETE FROM results WHERE scope IN ('surface','surface_dd','coil_dd') AND stamp <> ?
+    AND (stamp NOT IN (SELECT stamp FROM runs) OR stamp IN (SELECT stamp FROM runs WHERE kind = ?))`, [run.stamp, run.kind ?? "design"]);
+  if (db.getRowsModified() > 0) db.run("VACUUM");
 }
 
 /** a run's hours — each KIND keeps its latest run's (2026-10-09): a calibration run never takes BEM's design run's away. The run's row
@@ -718,7 +736,7 @@ export function queryTariffs(db: Database, stamp: string): Array<{ name: string;
 /** the hourly series of a run (only the latest run keeps its hours) */
 export function queryHourly(db: Database, stamp: string): Array<{ name: string; units: string; values: number[]; start?: [number, number, number] }> {
   const out: Array<{ name: string; units: string; values: number[]; start?: [number, number, number] }> = [];
-  const st = db.prepare("SELECT name, units, vals, start FROM hourly WHERE stamp=? AND name NOT LIKE 'coil|%' ORDER BY name");
+  const st = db.prepare("SELECT name, units, vals, start FROM hourly WHERE stamp=? AND name NOT LIKE 'coil|%' AND name NOT LIKE 'zdiv|%' AND name NOT LIKE 'zunmet|%' ORDER BY name");
   st.bind([stamp]);
   while (st.step()) {
     const r = st.get() as [string, string, string, string | null];
@@ -727,6 +745,23 @@ export function queryHourly(db: Database, stamp: string): Array<{ name: string; 
   }
   st.free();
   return out;
+}
+
+/** each conditioned zone's hourly divergence from its setpoints (2026-11-22) — empty for a run before the hourly output was asked */
+export function queryZoneDivergence(db: Database, stamp: string): ZoneDivergence[] {
+  const by = new Map<string, ZoneDivergence>();
+  const st = db.prepare("SELECT name, vals, start FROM hourly WHERE stamp=? AND (name LIKE 'zdiv|%' OR name LIKE 'zunmet|%')");
+  st.bind([stamp]);
+  while (st.step()) {
+    const r = st.get() as [string, string, string | null];
+    const div = r[0].startsWith(DIV_PREFIX), zone = r[0].slice(div ? DIV_PREFIX.length : UNMET_PREFIX.length);
+    const z = by.get(zone) ?? by.set(zone, { zone, div: [], unmet: [] }).get(zone)!;
+    if (div) z.div = JSON.parse(r[1]) as number[]; else z.unmet = JSON.parse(r[1]) as number[];
+    const s = r[2] ? r[2].split("-").map(Number) : null;
+    if (s && s.length === 3) z.start = s as [number, number, number];
+  }
+  st.free();
+  return [...by.values()].filter((z) => z.div.length && z.unmet.length).sort((a, b) => a.zone.localeCompare(b.zone));
 }
 
 /** the End Uses cells of a run, by row and fuel */

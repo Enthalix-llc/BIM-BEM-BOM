@@ -15,6 +15,7 @@
 // later: `Hour` marks the END of the interval.
 
 import type { Database } from "sql.js";
+import { divergenceFrom, ZONE_DIVERGENCE_VARIABLES, type ZoneDivergence } from "./zoneDivergence.js";
 
 /** the coil rates a structure's peak is summed from (2026-10-11): the engine's own variable names */
 export const COIL_RATE = { heating: "Heating Coil Heating Rate", cooling: "Cooling Coil Total Cooling Rate" } as const;
@@ -153,6 +154,8 @@ export interface RunResults {
   designSurfaceTemps?: DesignSurfaceTemp[];
   /** every coil's rate on the design days (each zone timestep) and over the weather year (hourly), W (2026-10-11) */
   coilDesign?: CoilDesignRate[]; coilYear?: CoilYearRate[];
+  /** each conditioned zone's hourly divergence from its setpoints (2026-11-22, RUN › UNMET HOURS) */
+  zoneDivergence?: ZoneDivergence[];
   /** each zone's design-day peak from its own air heat balance, in ComponentLoad's terms (2026-10-11) */
   zoneBalance?: ComponentLoad[];
 }
@@ -486,8 +489,21 @@ export function readRunSql(db: Database, opts: { hpwhZones?: ReadonlyMap<string,
     }
     coilYear.push(...by.values());
   }
+  // THE ZONES' HOURLY DIVERGENCE (2026-11-22, RUN › UNMET HOURS): the five hourly series per conditioned zone → zoneDivergence.ts
+  let zoneDivergence: ZoneDivergence[] = [];
+  {
+    const series = new Map<string, number[]>();
+    const names = [...ZONE_DIVERGENCE_VARIABLES];
+    for (const r of rows(db, `SELECT d.Name, d.KeyValue, r.Value FROM ReportData r JOIN ReportDataDictionary d ON d.ReportDataDictionaryIndex=r.ReportDataDictionaryIndex
+        JOIN Time t ON t.TimeIndex=r.TimeIndex JOIN EnvironmentPeriods e ON e.EnvironmentPeriodIndex=t.EnvironmentPeriodIndex
+        WHERE e.EnvironmentType=3 AND d.ReportingFrequency='Hourly' AND d.Name IN (${names.map(() => "?").join(",")}) ORDER BY d.ReportDataDictionaryIndex, t.TimeIndex`, names)) {
+      const k = `${str(at(r, 0))}|${str(at(r, 1)).toUpperCase()}`;
+      (series.get(k) ?? series.set(k, []).get(k)!).push(num(at(r, 2)));
+    }
+    if (series.size) zoneDivergence = divergenceFrom(series, hourly.find((h) => h.start)?.start);
+  }
   const zoneBalance = readZoneBalance(db, opts);
-  return { facility, facilityPeak, sizing, peaks, zoneUnmet, series, daily, hourly, tariffs, surfaces, zones, reportNames, endUses, fuelPeaks, fuelPeakTimes, sizingDetails, componentLoads, designSurfaceTemps, coilDesign, coilYear, zoneBalance };
+  return { zoneDivergence, facility, facilityPeak, sizing, peaks, zoneUnmet, series, daily, hourly, tariffs, surfaces, zones, reportNames, endUses, fuelPeaks, fuelPeakTimes, sizingDetails, componentLoads, designSurfaceTemps, coilDesign, coilYear, zoneBalance };
 }
 
 /** a surface's group in the balance — the engine's Component Load Summary row names, so the colours carry over. The boundary is the sql's

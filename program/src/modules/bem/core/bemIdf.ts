@@ -30,6 +30,7 @@ import type { ResolvedSystems, ResolvedField } from "./bemSystems.js";
 import { defaultSystemRows } from "./bemSystems.js";
 import type { SystemSection } from "./mepFocus.js";
 import { COIL_RATE, ZONE_BALANCE_VARIABLES, ERV_RATE_VARIABLES } from "./eplusSql.js";
+import { ZONE_DIVERGENCE_VARIABLES } from "./zoneDivergence.js";
 import { wallPlanes, exposedEdges, perimeterOf, cFactor, groundDefaultsFor, slabPlan, slabFactors, groundMethodOf, assignKivaWalls, F_TABLE_CITE, type KivaFloorIn, type KivaWallIn } from "./groundCoupling.js";
 import type { PlacedOpening } from "../../../core/placeOpenings.js";
 import { envelopeOpenings, roofShadePolys, type OpeningAccount } from "./envelopeOpenings.js";
@@ -1588,6 +1589,13 @@ export function writeIdf(
     // by the MONTH (2026-11-21, RUN's UNMET HOURS view: "when temperatures were not met") — the year is the twelve summed
     obj("Output:Variable", "*", "Zone Heating Setpoint Not Met Time", "Monthly");
     obj("Output:Variable", "*", "Zone Cooling Setpoint Not Met Time", "Monthly");
+    // by the HOUR, conditioned zones only (2026-11-22, the UNMET HOURS view: "per space divergence … a timeline (month/day/hour)"):
+    // the zone's air against its two setpoints, and the not-met time the engine counts — so the hours summed are the engine's own
+    for (const z of report.model.conditionedZones) {
+      const ep = zoneEp.get(z);
+      if (!ep) continue;
+      for (const v of ZONE_DIVERGENCE_VARIABLES) obj("Output:Variable", ep, v, "Hourly");
+    }
     obj("Output:Meter", "DistrictHeatingWater:Facility", "Monthly");
     obj("Output:Meter", "DistrictCooling:Facility", "Monthly");
     // daily meters: the operations model sums them over BILL PERIODS, never months
