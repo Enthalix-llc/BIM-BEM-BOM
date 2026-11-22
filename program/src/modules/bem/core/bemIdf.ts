@@ -1585,8 +1585,9 @@ export function writeIdf(
     // real equipment, so the zone table and the lens read this pair where that one is absent
     obj("Output:Variable", "*", "Zone Air System Sensible Heating Energy", "Monthly");
     obj("Output:Variable", "*", "Zone Air System Sensible Cooling Energy", "Monthly");
-    obj("Output:Variable", "*", "Zone Heating Setpoint Not Met Time", "RunPeriod");
-    obj("Output:Variable", "*", "Zone Cooling Setpoint Not Met Time", "RunPeriod");
+    // by the MONTH (2026-11-21, RUN's UNMET HOURS view: "when temperatures were not met") — the year is the twelve summed
+    obj("Output:Variable", "*", "Zone Heating Setpoint Not Met Time", "Monthly");
+    obj("Output:Variable", "*", "Zone Cooling Setpoint Not Met Time", "Monthly");
     obj("Output:Meter", "DistrictHeatingWater:Facility", "Monthly");
     obj("Output:Meter", "DistrictCooling:Facility", "Monthly");
     // daily meters: the operations model sums them over BILL PERIODS, never months

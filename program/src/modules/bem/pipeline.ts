@@ -25,6 +25,7 @@ import { stampIdfContentSha } from "../../core/stale.js";
 import { buildModel, DEFAULT_MODEL, type BuiltModel, type BemSetting } from "./core/bemModel.js";
 import { readRunSql, type RunResults, type EndUseCell, type FuelPeak, type SizingDetail, type ComponentLoad } from "./core/eplusSql.js";
 import { parseErr, type ErrSummary } from "./core/eplusErr.js";
+import { groundMethodOf, kivaReadsWeather, fFactor, cFactor } from "./core/groundCoupling.js";
 import { RECORD_FILES, runSummary } from "./core/runRecord.js";
 import {
   openBemDb, writeModel, writeRun, stampBemContentSha, queryBemSurfaces, queryNotEmitted, queryResults, queryResultRows, queryDailyMeters, queryHourly, queryTariffs, provenanceCensus,
@@ -131,6 +132,10 @@ export interface BemOutcome extends BemModelOutcome {
   monthlyZoneCooling: Map<string, number[]>;
   /** which variable a zone's heating and cooling were read from: the ideal-loads pair, or the zone air system's (real equipment) */
   zoneSource: Map<string, "ideal loads" | "air system">;
+  /** every zone's hours with its heating or cooling setpoint not met, month by month (2026-11-21, RUN's UNMET HOURS); empty for a run
+   *  made before — its year is in the per-zone totals (the engine's SystemSummary), kept beside as `unmetYear` */
+  monthlyUnmet: { heating: Map<string, number[]>; cooling: Map<string, number[]> };
+  unmetYear: { heating: Map<string, number>; cooling: Map<string, number> };
 }
 
 const J = 3.6e6;
@@ -330,7 +335,7 @@ export async function runBemPipeline(
  *  run on BEM"). The model as committed in idf.db — the same rulings, the same library values — run on the ACTUAL YEAR the bills were
  *  metered under (an EPW given by path, its RunPeriod the file's own dated span). Nothing of the model is written: bem.db gains the run
  *  alone, kind "calibration", with its hours; BEM's design run and its hours stay its own. */
-export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; schema?: EpSchema | null; onProgress: (line: string) => void }): Promise<{ run: BemRun; err: ErrSummary; hourly: ReturnType<typeof queryHourly> }> {
+export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; schema?: EpSchema | null; onProgress: (line: string) => void }): Promise<{ run: BemRun; err: ErrSummary; hourly: ReturnType<typeof queryHourly>; ground: string }> {
   const engine = await window.bem.engine();
   const bytes = await window.bem.readDataFile("idf.db");
   if (!bytes) throw new Error("data/idf.db is not there — build the envelope first");
@@ -343,10 +348,24 @@ export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; 
   if (!store) throw new Error("idf.db holds no model yet — Apply on a BEM tab first");
   if (!store.weather?.amy) throw new Error(`${texts.path.split(/[\\/]/).pop()} is not an actual-year file — a calibration runs on the year the bills were metered under`);
   const mi = store.built.input;
-  const w = writeIdf(mi.faces, mi.elements, mi.zoneVolumesM3, mi.site, mi.trueNorth, mi.sourceIfcName, store.weather, store.built.model);
+  // THE GROUND ON AN ACTUAL YEAR (user's ruling, 2026-11-21): Kiva reads the weather file by calendar day from its first row
+  // (groundCoupling.kivaReadsWeather) — on a year that is not 1 January to 31 December it reads the wrong days and the engine crashed.
+  // That calibration run alone takes the F/C-factor method on the user's typed F and C; BEM's design run keeps Kiva
+  const amy = store.weather.amy;
+  const fmtD = (d: [number, number, number]): string => `${d[0]}-${String(d[1]).padStart(2, "0")}-${String(d[2]).padStart(2, "0")}`;
+  let calModel = store.built.model;
+  let ground = `${groundMethodOf(calModel.ground) === "kiva" ? "Kiva" : groundMethodOf(calModel.ground) === "fcfactor" ? "F/C-factor" : "constant ground temperature"} — as BEM's design run`;
+  if (groundMethodOf(calModel.ground) === "kiva" && !kivaReadsWeather(amy)) {
+    const g = calModel.ground;
+    if (!Number.isFinite(fFactor(g?.fIp).wmK) || !Number.isFinite(cFactor(g?.wallR ?? 10, g?.cIp).wm2K))
+      throw new Error(`the calibration year runs ${fmtD(amy.begin)} → ${fmtD(amy.end)}, not 1 January to 31 December, and EnergyPlus's Kiva foundations read a weather file by calendar day from its first row — on such a year they read the wrong days and the engine crashes. The calibration run therefore takes the F/C-factor ground method, which needs the slab's F-factor and the below-grade walls' C-factor typed on BEM › CONSTRUCTIONS › Floors (${!Number.isFinite(fFactor(g?.fIp).wmK) ? "F" : ""}${!Number.isFinite(fFactor(g?.fIp).wmK) && !Number.isFinite(cFactor(g?.wallR ?? 10, g?.cIp).wm2K) ? " and " : ""}${!Number.isFinite(cFactor(g?.wallR ?? 10, g?.cIp).wm2K) ? "C" : ""} not entered). BEM's design run keeps Kiva.`);
+    calModel = { ...calModel, ground: { ...(g ?? {}), method: "fcfactor" } };
+    ground = `F/C-factor (F ${g!.fIp} · C ${g!.cIp}) — Kiva cannot read a year from ${fmtD(amy.begin)}; BEM's design run keeps Kiva`;
+  }
+  const w = writeIdf(mi.faces, mi.elements, mi.zoneVolumesM3, mi.site, mi.trueNorth, mi.sourceIfcName, store.weather, calModel);
   if (w.report.codeGap) throw new Error(w.report.codeGap);
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
-  opts.onProgress(`calibration run · ${store.weather.amy.begin} → ${store.weather.amy.end} · ${(w.idf.length / 1e3).toFixed(0)} kB · ${engine ? engine.version : "NO ENGINE FOUND"}`);
+  opts.onProgress(`calibration run · ${fmtD(amy.begin)} → ${fmtD(amy.end)} · ground ${ground.split(" — ")[0]} · ${(w.idf.length / 1e3).toFixed(0)} kB · ${engine ? engine.version : "NO ENGINE FOUND"}`);
   const res = await window.bem.run({ stamp, idf: w.idf, epw: store.weather.epw, expand: store.built.model.idealLoads });
   const errBytes = await window.bem.readRunFile(stamp, "eplusout.err");
   const err = parseErr(errBytes ? new TextDecoder().decode(errBytes) : (res.error ?? "no eplusout.err"));
@@ -358,6 +377,8 @@ export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; 
   const sqlBytes = await window.bem.readRunFile(stamp, "eplusout.sql");
   if (sqlBytes) { const rdb = new SQL.Database(sqlBytes); results = readRunSql(rdb); rdb.close(); }
   writeRun(bdb, run, results);
+  // which ground method the run took, in words (scope "run": no result of the model's) — the calibration card says it
+  bdb.run("INSERT INTO results VALUES (?,?,?,?,?,?,?,?)", [stamp, "run", "", 0, "ground_method", 1, "", ground]);
   stampBemContentSha(bdb);
   const out = bdb.export();
   bdb.close();
@@ -366,11 +387,11 @@ export async function runCalibration(SQL: SqlJsStatic, opts: { epwPath: string; 
   await recordRun(again, run, results, null, opts.onProgress);
   const hourly = queryHourly(again, stamp);
   again.close();
-  return { run, err, hourly };
+  return { run, err, hourly, ground };
 }
 
 /** the latest calibration run's hours, read back (no engine) */
-export async function readLatestCalibration(SQL: SqlJsStatic): Promise<{ run: BemRun; hourly: ReturnType<typeof queryHourly> } | null> {
+export async function readLatestCalibration(SQL: SqlJsStatic): Promise<{ run: BemRun; hourly: ReturnType<typeof queryHourly>; ground: string | null } | null> {
   const bytes = await window.bem.readDataFile("bem.db");
   if (!bytes) return null;
   const db = new SQL.Database(bytes);
@@ -378,7 +399,8 @@ export async function readLatestCalibration(SQL: SqlJsStatic): Promise<{ run: Be
     const run = queryRuns(db).filter((r) => r.kind === "calibration").pop();
     if (!run) return null;
     const hourly = queryHourly(db, run.stamp);
-    return hourly.length ? { run, hourly } : null;
+    const ground = queryResultRows(db, run.stamp, "run", "ground_method")[0]?.origin ?? null;
+    return hourly.length ? { run, hourly, ground } : null;
   } finally { db.close(); }
 }
 
@@ -437,7 +459,9 @@ function runOutcome(again: Database, base: BemModelOutcome, stamp: string, run: 
   const daily = queryDailyMeters(again, stamp);
   return { ...base, stamp, run, err, results, facility, zoneHeating, zoneCooling, zoneUnmet, surfaceConduction, windowNet, designSurfaceTemps: queryDesignSurfaceTemps(again, stamp), coilRates: queryCoilRates(again, stamp), daily, hourly: queryHourly(again, stamp), tariffs: queryTariffs(again, stamp), loads: readLoads(again, stamp),
     endUses: queryEndUses(again, stamp), fuelPeaks: fp.peaks, fuelPeakTimes: fp.times, sizingDetails: querySizingDetails(again, stamp), componentLoads: queryComponentLoads(again, stamp), zoneBalance: queryZoneBalance(again, stamp),
-    monthlyMeters: kwhRows(queryMonthlyMeters(again, stamp)), monthlyZoneHeating: mzh, monthlyZoneCooling: mzc, zoneSource };
+    monthlyMeters: kwhRows(queryMonthlyMeters(again, stamp)), monthlyZoneHeating: mzh, monthlyZoneCooling: mzc, zoneSource,
+    monthlyUnmet: { heating: queryMonthlyByZone(again, stamp, "Zone Heating Setpoint Not Met Time"), cooling: queryMonthlyByZone(again, stamp, "Zone Cooling Setpoint Not Met Time") },
+    unmetYear: { heating: queryResults(again, stamp, "zone", "unmet_heating"), cooling: queryResults(again, stamp, "zone", "unmet_cooling") } };
 }
 
 /** the design loads, the weather-year peaks and the facility peak, from bem.db's long table */

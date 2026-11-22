@@ -13,7 +13,9 @@ import type { BillRow } from "../core/csvRead.js";
 import type { PvRead } from "../core/pvRead.js";
 import { calibrationDays, calibrationPeriods, pairStats, verdictFor, sunEstimated, METERS, type HourSeries, type G14, type PairPeriod } from "../core/calibration.js";
 
-export interface CalibrationRunView { stamp: string; epw: string | null; fatal: number; severe: number; warning: number; seconds: number; completed: boolean; hourly: HourSeries[]; epwKind: "TMY" | "AMY" | "unknown"; epwComment: string }
+export interface CalibrationRunView { stamp: string; epw: string | null; fatal: number; severe: number; warning: number; seconds: number; completed: boolean; hourly: HourSeries[]; epwKind: "TMY" | "AMY" | "unknown"; epwComment: string;
+  /** the ground method the run took, in words (2026-11-21: Kiva cannot read an actual year that is not a calendar year) — null for a run made before */
+  ground?: string | null }
 
 const k0 = (v: number): string => Math.round(v).toLocaleString();
 const pct = (billed: number | null, model: number): string => (billed === null || billed === 0 ? "" : `${(((model - billed) / Math.abs(billed)) * 100).toFixed(1)} %`);
@@ -67,6 +69,7 @@ export function BomCalibration(p: {
       {p.run && (
         <>
           <div className="idfInfo">run {p.run.stamp} · {(p.run.epw ?? "").split(/[\\/]/).pop()?.replace(/\.epw$/i, "")} · {p.run.completed ? "completed" : "DID NOT COMPLETE"} · Fatal {p.run.fatal} · Severe {p.run.severe} · Warning {p.run.warning} · {p.run.seconds.toFixed(0)} s</div>
+          {p.run.ground && <div className="idfInfo" title="the ground coupling this run wrote. EnergyPlus's Kiva foundations read a weather file by calendar day from its first row, so an actual year that is not 1 January to 31 December runs on the F/C-factor method with the F and C typed on BEM › CONSTRUCTIONS › Floors">ground: {p.run.ground}</div>}
           {verdict && (
             <>
               <div className="kv"><span>verdict</span><b className={verdict.verdict === "calibrated" ? "ok" : verdict.verdict === "not calibrated" ? "bad" : ""}>{verdict.verdict === "comparison" ? "comparison, not calibration" : verdict.verdict}</b></div>

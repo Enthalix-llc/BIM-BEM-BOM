@@ -52,6 +52,16 @@ export function slabPlan(g: { slabR?: number; slabDepthM?: number; slabExtent?: 
 export const DEFAULT_GROUND_METHOD = "kiva" as const;
 export function groundMethodOf(g: { method?: "ground" | "fcfactor" | "kiva" } | undefined): "ground" | "fcfactor" | "kiva" { return g?.method ?? DEFAULT_GROUND_METHOD; }
 
+/** KIVA READS THE WEATHER FILE BY CALENDAR DAY (2026-11-21, measured on the calibration year): HeatBalanceKivaManager.cc keeps the file's
+ *  rows from its first and looks a day up as (day of year − 1) × 24. A file that does not start on 1 January is read on the wrong days,
+ *  and one that ends before 31 December runs past its rows — EnergyPlus 26.1 segfaulted (exit 139) in the first heat balance on the
+ *  2025-10-14 → 2026-09-13 actual-year file, and the same IDF ran clean on the 2025 calendar-year file. True when Kiva reads the file
+ *  right: a typical year (null), or an actual year from 1 January to 31 December of ONE year */
+export function kivaReadsWeather(amy: { begin: [number, number, number]; end: [number, number, number] } | null): boolean {
+  if (!amy) return true;
+  return amy.begin[0] === amy.end[0] && amy.begin[1] === 1 && amy.begin[2] === 1 && amy.end[1] === 12 && amy.end[2] === 31;
+}
+
 /** an F-factor as typed (Btu/h·ft·°F) → W/m·K; untyped → NaN, said so */
 export function fFactor(typedIp?: number): { wmK: number; ip: number; entry: string } {
   return typedIp !== undefined && Number.isFinite(typedIp) && typedIp > 0 ? { wmK: typedIp * F_SI, ip: typedIp, entry: "typed from ASHRAE 90.1 Table A6.3.1" } : { wmK: NaN, ip: NaN, entry: "not entered" };

@@ -1462,3 +1462,12 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .dialog.unservedDialog { width: min(560px, 92vw); }
 .dialog .unservedOpt { text-align: left; padding: 6px 8px; line-height: 1.5; white-space: normal; }
 .dialog .unservedOpt.on { border-color: var(--src-user, #e8b04a); }
+
+/* RUN › UNMET HOURS (2026-11-21): a table of the conditioned zones whose setpoints were not met, month by month */
+.unmetView { display: flex; flex-direction: column; gap: 6px; }
+.unmetTable td.spaces { white-space: normal; max-width: 260px; color: var(--muted); }
+.unmetTable tr.first td { border-top: 1px solid var(--line); }
+.unmetTable td.hit { color: var(--warn); }
+.unmetTable td.heat { color: #e8603c; }
+.unmetTable td.cool { color: #3c8ce8; }
+.unmetTable tfoot td { color: var(--muted); padding-top: 6px; white-space: normal; }

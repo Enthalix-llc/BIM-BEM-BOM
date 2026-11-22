@@ -3038,10 +3038,10 @@ export function App(): React.ReactElement {
     setCalibration({ pv: { sha256: sha, name: f.name } });
     setStatus(`PV production: ${read.days.length} days read from ${f.name} (${read.energyColumn})${read.problems.length ? ` · ${read.problems.length} rows not read` : ""}`);
   }, [setCalibration]);
-  const calibrationView = async (r: { run: { stamp: string; epw: string | null; fatal: number; severe: number; warning: number; seconds: number; completed: boolean }; hourly: CalibrationRunView["hourly"] }): Promise<CalibrationRunView> => {
+  const calibrationView = async (r: { run: { stamp: string; epw: string | null; fatal: number; severe: number; warning: number; seconds: number; completed: boolean }; hourly: CalibrationRunView["hourly"]; ground?: string | null }): Promise<CalibrationRunView> => {
     const text = r.run.epw ? await window.bem.readText(r.run.epw) : null;
     const epw = text ? readEpw(text) : null;
-    return { ...r.run, hourly: r.hourly, epwKind: epw?.kind ?? "unknown", epwComment: epw?.comment ?? "" };
+    return { ...r.run, hourly: r.hourly, epwKind: epw?.kind ?? "unknown", epwComment: epw?.comment ?? "", ground: r.ground ?? null };
   };
   // ownEpw: the user's own actual-year file (picked on the card) — for paid work, where Open-Meteo's free archive may not be used
   const runCalibrationYear = useCallback(async (span: { a: string; b: string }, ownEpw?: string) => {
@@ -3056,7 +3056,7 @@ export function App(): React.ReactElement {
       const SQL = await getSql(wasmUrl);
       const r = await runCalibration(SQL, { epwPath: w.epw, schema: schemaRef.current, onProgress: setCalBusy });
       setCalRun(await calibrationView(r));
-      setStatus(`calibration run ${r.run.completed ? "completed" : "did not complete"} · ${span.a} – ${end} · Fatal ${r.run.fatal} · Severe ${r.run.severe} — BEM's design run untouched`);
+      setStatus(`calibration run ${r.run.completed ? "completed" : "did not complete"} · ${span.a} – ${end} · Fatal ${r.run.fatal} · Severe ${r.run.severe} · ground ${r.ground} — BEM's design run untouched`);
     } catch (e) { setStatus(`calibration run failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setCalBusy(""); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5221,6 +5221,7 @@ export function App(): React.ReactElement {
                 shown hid the other behind the frame's title) */}
             {tab === "bem-run" && <button className={graphView && runGraph.section === "annual" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "annual" }); }} title="the run's year graphed by the hour: outside temperature, heating and cooling, ventilation, occupant loads, PV, bought and sold — the frame below picks the lines and the window">GRAPHS · ANNUAL</button>}
             {tab === "bem-run" && <button className={graphView && runGraph.section === "peak" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "peak" }); }} title="peak conditioning per structure and per zone on the design days — the frame below picks the parts">GRAPHS · PEAK</button>}
+            {tab === "bem-run" && <button className={graphView && runGraph.section === "unmet" ? "on" : ""} onClick={() => { setRunView("graphs"); setRunGraph({ ...runGraph, section: "unmet" }); }} title="the hours each conditioned zone's setpoint was not met, month by month, with the zone's spaces — unconditioned zones are not listed">UNMET HOURS</button>}
             {tab === "bem-run" && <button className={reportView ? "on" : ""} onClick={() => setRunView("report")} title="EnergyPlus's own tabular report (eplustbl.htm) for the run, as the engine wrote it — the end uses, the zone and space component loads, sizing, envelope; a run that ended Fatal shows its error file">REPORT · ENGINE</button>}
             {tab !== "bem-constructions" && tab !== "bem-schedules" && tab !== "bem-systems" && <button className={eff.has("idf") ? "on" : ""} onClick={() => (tab === "bem-run" ? (setRunView("model"), lens !== "surface-temp-winter" && lens !== "surface-temp-summer" && applyLens("surface-temp-winter")) : toggleView("idf"))} title={tab === "bem-site" ? (siteView === "location" ? "the project location — OpenStreetMap" : siteView === "weather" ? "the weather stations — EnergyPlus's weather repository" : siteView === "solar" ? "the model under its terrain, with the site's shading elements and the sun" : "the model; the files beside the house are listed below")
                 : tab === "bem-zones" ? `the model alone, no site — painted ${lens === "none" ? "by the sheet's Zones; rooms in none are grey" : `by ${LENSES.find((l) => l.id === lens)?.label ?? lens}`}`
@@ -5543,7 +5544,7 @@ export function App(): React.ReactElement {
           )}
           {module === "bem" && tab === "bem-run" && graphView && (
             <section>
-              <h4 title={runGraph.section === "annual" ? "the lines the graph draws, summed over the window in view and at the points clicked" : "the parts and loads the view draws"}>RUN · {runGraph.section === "annual" ? "ANNUAL — the lines summed" : "PEAK"}{bem ? ` · run ${bem.stamp}` : " · no run yet"}</h4>
+              <h4 title={runGraph.section === "annual" ? "the lines the graph draws, summed over the window in view and at the points clicked" : "the parts and loads the view draws"}>RUN · {runGraph.section === "annual" ? "ANNUAL — the lines summed" : runGraph.section === "unmet" ? "UNMET HOURS" : "PEAK"}{bem ? ` · run ${bem.stamp}` : " · no run yet"}</h4>
               <RunGraphFrame state={runGraph} onState={setRunGraph} bem={bem} imperial={imperial} spacesByZone={bemModel?.report.model.spacesByZone} />
             </section>
           )}
