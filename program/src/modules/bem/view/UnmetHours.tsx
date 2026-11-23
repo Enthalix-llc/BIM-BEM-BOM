@@ -111,7 +111,6 @@ export function UnmetHoursFrame(p: { bem: BemOutcome; imperial: boolean; selecte
   const met = groups.filter((g) => !g.rows.length).map((g) => g.zone);
   const sum = (side: "heating" | "cooling"): number => hit.reduce((t, g) => t + (g.rows.find((r) => r.side === side)?.total ?? 0), 0);
   const toggle = (k: string): void => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const cols = 4 + (byMonth ? ms.length : 0) + 1;
   return (
     <div className="unmetView">
       <div className="runGraphNote">
@@ -123,7 +122,7 @@ export function UnmetHoursFrame(p: { bem: BemOutcome; imperial: boolean; selecte
       </div>
       {hit.length === 0 ? <div className="runGraphNote">every conditioned zone met its setpoints every hour of the run</div> : (
         <table className="runSums unmetTable">
-          <thead><tr><th>zone</th><th>spaces</th><th>side</th><th className="num">setpoint</th>
+          <thead><tr><th>zone · its spaces</th><th>side</th><th className="num">setpoint</th>
             {byMonth && ms.map((m, k) => <th key={k} className="num">{monthLabel(m, spanYears)}</th>)}<th className="num">year, h</th></tr></thead>
           <tbody>
             {hit.flatMap((g) => g.rows.flatMap((r, i) => {
@@ -132,8 +131,7 @@ export function UnmetHoursFrame(p: { bem: BemOutcome; imperial: boolean; selecte
                 <tr key={key} className={`${i === 0 ? "first" : ""}${sel ? " sel" : ""}${g.dv ? " drillable" : ""}`}
                   onClick={(e) => p.onSelect(g.zone, e.metaKey || e.ctrlKey)} onDoubleClick={() => g.dv && toggle(key)}
                   title={g.dv ? (drill ? "double-click to roll the degrees up" : `double-click to drop the ${r.side} hours by whole ${du} of divergence`) : "run again for the drill-down by degree"}>
-                  <td>{i === 0 ? g.zone : ""}</td>
-                  <td className="spaces">{i === 0 ? g.spaces.join(", ") : ""}</td>
+                  <td className="zoneCell">{i === 0 && <><b>{g.zone}</b><span className="spaces">{g.spaces.join(", ")}</span></>}</td>
                   <td className={r.side === "heating" ? "heat" : "cool"}>{g.dv ? (drill ? "▾ " : "▸ ") : ""}{r.side}</td>
                   <td className="num">{temp(r.setC)}</td>
                   {byMonth && ms.map((m, k) => <td key={k} className={`num${(r.months?.[k] ?? 0) >= 0.05 ? " hit" : ""}`} onClick={() => hourly && p.onMonth(m.a)}>{hrs(r.months?.[k] ?? 0)}</td>)}
@@ -142,16 +140,16 @@ export function UnmetHoursFrame(p: { bem: BemOutcome; imperial: boolean; selecte
               ];
               if (drill && g.dv) for (const bin of binsOf(g.dv, r.side, ms, degScale)) out.push(
                 <tr key={`${key}|${bin.from}`} className={`bin ${r.side === "heating" ? "heat" : "cool"}`} onDoubleClick={() => toggle(key)} onClick={(e) => p.onSelect(g.zone, e.metaKey || e.ctrlKey)}>
-                  <td /><td /><td className="binLabel" colSpan={2}>{bin.from === 0 ? `under 1 ${du}` : `${bin.from}–${bin.from + 1} ${du}`} {r.side === "heating" ? "too cold" : "too hot"}</td>
+                  <td /><td className="binLabel" colSpan={2}>{bin.from === 0 ? `under 1 ${du}` : `${bin.from}–${bin.from + 1} ${du}`} {r.side === "heating" ? "too cold" : "too hot"}</td>
                   {ms.map((m, k) => <td key={k} className={`num${bin.months[k]! >= 0.05 ? " hit" : ""}`} onClick={() => p.onMonth(m.a)}>{hrs(bin.months[k]!)}</td>)}
                   <td className="num">{hrs(bin.year)}</td>
                 </tr>);
               return out;
             }))}
           </tbody>
-          <tfoot><tr><td colSpan={cols}>Σ over the zones listed: heating {hrs(sum("heating")) || "0"} h · cooling {hrs(sum("cooling")) || "0"} h — zone-hours, not the facility's (the engine's facility count is {bem.facility.unmetHeatingH.toFixed(1)} h heating · {bem.facility.unmetCoolingH.toFixed(1)} h cooling, occupied hours with any zone unmet). A degree band holds the hours whose MEAN air missed the setpoint by that much; "under 1" also holds hours the engine counts as not met inside the hour while the hour's mean stood on the setpoint's right side.</td></tr></tfoot>
         </table>
       )}
+      {hit.length > 0 && <div className="runGraphNote">Σ over the zones listed: heating {hrs(sum("heating")) || "0"} h · cooling {hrs(sum("cooling")) || "0"} h — zone-hours, not the facility's (the engine's facility count is {bem.facility.unmetHeatingH.toFixed(1)} h heating · {bem.facility.unmetCoolingH.toFixed(1)} h cooling, occupied hours with any zone unmet). A degree band holds the hours whose MEAN air missed the setpoint by that much; "under 1" also holds hours the engine counts as not met inside the hour while the hour's mean stood on the setpoint's right side.</div>}
       {met.length > 0 && <div className="runGraphNote">met every hour: {met.join(", ")}</div>}
     </div>
   );

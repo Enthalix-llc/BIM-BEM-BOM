@@ -1490,3 +1490,8 @@ body.explaining .explainHover { outline: 1px dashed #7fd0a0; outline-offset: 1px
 .unmetTable tr.bin.heat td.binLabel { color: #e8603c; }
 .unmetTable tr.bin.cool td.binLabel { color: #3c8ce8; }
 .unmetTable td.num.hit { cursor: pointer; }
+/* the table only as wide as its columns: the spaces wrap under the zone's name (2026-11-22, the months had been pushed off the frame) */
+.unmetTable { width: max-content; }
+.unmetTable td.zoneCell { white-space: normal; min-width: 120px; max-width: 220px; vertical-align: top; }
+.unmetTable td.zoneCell b { display: block; }
+.unmetTable td.zoneCell .spaces { display: block; color: var(--muted); font-size: 0.9em; }
